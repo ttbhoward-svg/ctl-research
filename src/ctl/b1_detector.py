@@ -78,6 +78,10 @@ class B1Trigger:
     # Flags
     expired: bool = False
 
+    # MTFA flags (Spec §9) — None if HTF data not provided
+    weekly_trend_aligned: Optional[bool] = None
+    monthly_trend_aligned: Optional[bool] = None
+
 
 # ---------------------------------------------------------------------------
 # Indicator pre-computation
@@ -146,11 +150,70 @@ def _find_swing_high(
     return float(rev[best_rev_idx])
 
 
+# ---------------------------------------------------------------------------
+# MTFA helpers (Spec §9)
+# ---------------------------------------------------------------------------
+
+def _prepare_htf(df: pd.DataFrame, params: B1Params) -> tuple:
+    """Pre-compute EMA10 and Slope_20 on a higher-timeframe DataFrame.
+
+    Returns (dates, close, ema10, slope20) as numpy arrays for fast lookup.
+    The input DataFrame must have Date and Close columns.  Rows are sorted
+    by Date to ensure correct searchsorted behavior.
+    """
+    work = df.sort_values("Date").reset_index(drop=True)
+    ema10 = ema(work["Close"], params.ema_period)
+    slope20 = slope_pct(ema10, params.slope_lookback)
+    return (
+        work["Date"].values,
+        work["Close"].values.astype(float),
+        ema10.values.astype(float),
+        slope20.values.astype(float),
+    )
+
+
+def _monthly_cutoff(trigger_date: pd.Timestamp) -> pd.Timestamp:
+    """Last calendar day of the month before *trigger_date*'s month.
+
+    Ensures only fully completed monthly bars are used (no current-month
+    in-progress bar).
+    """
+    return trigger_date.replace(day=1) - pd.Timedelta(days=1)
+
+
+def _htf_aligned(
+    htf_dates: np.ndarray,
+    htf_close: np.ndarray,
+    htf_ema10: np.ndarray,
+    htf_slope20: np.ndarray,
+    cutoff: pd.Timestamp,
+    slope_threshold: float,
+) -> bool:
+    """Check HTF trend alignment per Spec §9.
+
+    Returns True if the last HTF bar at or before *cutoff* has:
+      (1) Slope_20 >= slope_threshold, AND
+      (2) Close > EMA10.
+    Returns False if no bar exists or indicators are NaN (insufficient history).
+    """
+    idx = int(np.searchsorted(htf_dates, np.datetime64(cutoff), side="right")) - 1
+    if idx < 0:
+        return False
+    c = htf_close[idx]
+    e = htf_ema10[idx]
+    s = htf_slope20[idx]
+    if np.isnan(e) or np.isnan(s):
+        return False
+    return bool(s >= slope_threshold and c > e)
+
+
 def detect_triggers(
     df: pd.DataFrame,
     symbol: str,
     timeframe: str,
     params: B1Params | None = None,
+    weekly_df: pd.DataFrame | None = None,
+    monthly_df: pd.DataFrame | None = None,
 ) -> List[B1Trigger]:
     """Scan a fully-indicator-enriched DataFrame for B1 triggers.
 
@@ -163,6 +226,12 @@ def detect_triggers(
     timeframe : str
         'daily' or 'weekly' — controls swing lookback.
     params : B1Params, optional
+    weekly_df : DataFrame, optional
+        Weekly OHLCV data for WeeklyTrendAligned flag (Spec §9.1).
+        Must have Date and Close columns.  If None, flag is left as None.
+    monthly_df : DataFrame, optional
+        Monthly OHLCV data for MonthlyTrendAligned flag (Spec §9.2).
+        Must have Date and Close columns.  If None, flag is left as None.
 
     Returns
     -------
@@ -171,6 +240,10 @@ def detect_triggers(
     """
     if params is None:
         params = B1Params()
+
+    # Prepare HTF data for MTFA flags (Spec §9).
+    weekly_arrays = _prepare_htf(weekly_df, params) if weekly_df is not None else None
+    monthly_arrays = _prepare_htf(monthly_df, params) if monthly_df is not None else None
 
     swing_lookback = (
         params.swing_lookback_daily
@@ -300,6 +373,17 @@ def detect_triggers(
             tp5=stop + rng * 2.618,
         )
 
+        # Annotate MTFA flags (Spec §9).
+        if weekly_arrays is not None:
+            trig.weekly_trend_aligned = _htf_aligned(
+                *weekly_arrays, trig.trigger_date, params.slope_threshold,
+            )
+        if monthly_arrays is not None:
+            trig.monthly_trend_aligned = _htf_aligned(
+                *monthly_arrays, _monthly_cutoff(trig.trigger_date),
+                params.slope_threshold,
+            )
+
         pending = trig
         # Confirmation window starts next bar.
 
@@ -320,10 +404,12 @@ def run_b1_detection(
     symbol: str,
     timeframe: str,
     params: B1Params | None = None,
+    weekly_df: pd.DataFrame | None = None,
+    monthly_df: pd.DataFrame | None = None,
 ) -> List[B1Trigger]:
     """Compute indicators then detect triggers. Non-mutating wrapper."""
     work = df.copy()
     if params is None:
         params = B1Params()
     compute_indicators(work, params)
-    return detect_triggers(work, symbol, timeframe, params)
+    return detect_triggers(work, symbol, timeframe, params, weekly_df, monthly_df)

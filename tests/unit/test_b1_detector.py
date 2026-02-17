@@ -17,6 +17,9 @@ from ctl.b1_detector import (
     B1Trigger,
     _count_bars_of_air,
     _find_swing_high,
+    _htf_aligned,
+    _monthly_cutoff,
+    _prepare_htf,
     compute_indicators,
     detect_triggers,
     run_b1_detection,
@@ -355,3 +358,184 @@ class TestDetectTriggers:
         # Detailed swing high verification is in TestSwingHigh.
         assert isinstance(triggers_d, list)
         assert isinstance(triggers_w, list)
+
+
+# ---------------------------------------------------------------------------
+# Helpers: MTFA test data
+# ---------------------------------------------------------------------------
+
+def _make_htf_df(
+    n: int = 40,
+    freq: str = "W-FRI",
+    start: str = "2019-01-04",
+    trend_slope: float = 2.5,
+    base: float = 100.0,
+) -> pd.DataFrame:
+    """Create a higher-timeframe DataFrame with a controlled linear trend."""
+    dates = pd.date_range(start, periods=n, freq=freq)
+    close = np.linspace(base, base + trend_slope * n, n)
+    return pd.DataFrame({
+        "Date": dates,
+        "Open": close - 1,
+        "High": close + 2,
+        "Low": close - 2,
+        "Close": close,
+        "Volume": np.full(n, 50000.0),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: MTFA flags (Spec §9)
+# ---------------------------------------------------------------------------
+
+class TestMTFAFlags:
+    def test_monthly_cutoff_basic(self):
+        """March trigger -> cutoff is last day of February."""
+        assert _monthly_cutoff(pd.Timestamp("2024-03-15")) == pd.Timestamp("2024-02-29")
+        assert _monthly_cutoff(pd.Timestamp("2023-03-15")) == pd.Timestamp("2023-02-28")
+
+    def test_monthly_cutoff_january(self):
+        """January trigger -> cutoff is December 31 of prior year."""
+        assert _monthly_cutoff(pd.Timestamp("2024-01-10")) == pd.Timestamp("2023-12-31")
+
+    def test_weekly_lookup_correct_bar(self):
+        """Trigger on Wednesday uses prior Friday's weekly bar."""
+        weekly = _make_htf_df(n=40, freq="W-FRI", start="2019-01-04")
+        params = B1Params()
+        arrays = _prepare_htf(weekly, params)
+
+        # Trigger on Wednesday 2019-07-17.
+        # Last Friday <= that date is 2019-07-12.
+        trigger_date = pd.Timestamp("2019-07-17")
+        last_friday = pd.Timestamp("2019-07-12")
+
+        idx = int(np.searchsorted(arrays[0], np.datetime64(trigger_date), side="right")) - 1
+        assert pd.Timestamp(arrays[0][idx]) == last_friday
+
+    def test_weekly_friday_trigger_uses_same_week(self):
+        """Trigger on Friday uses that Friday's weekly bar (completed at close)."""
+        weekly = _make_htf_df(n=40, freq="W-FRI", start="2019-01-04")
+        params = B1Params()
+        arrays = _prepare_htf(weekly, params)
+
+        trigger_date = pd.Timestamp("2019-07-12")  # a Friday
+        idx = int(np.searchsorted(arrays[0], np.datetime64(trigger_date), side="right")) - 1
+        assert pd.Timestamp(arrays[0][idx]) == trigger_date
+
+    def test_holiday_shortened_week(self):
+        """Weekly bar ending earlier than Friday (holiday) is found correctly."""
+        weekly = _make_htf_df(n=40, freq="W-FRI", start="2019-01-04")
+        # Simulate holiday: move 2019-07-05 (Friday) to 2019-07-03 (Wed before July 4th).
+        weekly_mod = weekly.copy()
+        mask = weekly_mod["Date"] == pd.Timestamp("2019-07-05")
+        weekly_mod.loc[mask, "Date"] = pd.Timestamp("2019-07-03")
+
+        params = B1Params()
+        # _prepare_htf sorts by Date, so the reordering is handled.
+        arrays = _prepare_htf(weekly_mod, params)
+
+        trigger_date = pd.Timestamp("2019-07-04")
+        idx = int(np.searchsorted(arrays[0], np.datetime64(trigger_date), side="right")) - 1
+        assert pd.Timestamp(arrays[0][idx]) == pd.Timestamp("2019-07-03")
+
+    def test_uptrend_weekly_aligned(self):
+        """Strong weekly uptrend -> aligned = True."""
+        weekly = _make_htf_df(n=40, freq="W-FRI", trend_slope=3.0)
+        params = B1Params()
+        arrays = _prepare_htf(weekly, params)
+
+        trigger_date = pd.Timestamp(weekly["Date"].iloc[-1])
+        result = _htf_aligned(*arrays, trigger_date, params.slope_threshold)
+        assert result is True
+
+    def test_downtrend_weekly_not_aligned(self):
+        """Weekly downtrend -> aligned = False."""
+        weekly = _make_htf_df(n=40, freq="W-FRI", trend_slope=-2.0, base=200.0)
+        params = B1Params()
+        arrays = _prepare_htf(weekly, params)
+
+        trigger_date = pd.Timestamp(weekly["Date"].iloc[-1])
+        result = _htf_aligned(*arrays, trigger_date, params.slope_threshold)
+        assert result is False
+
+    def test_monthly_uses_prior_month(self):
+        """Monthly flag uses prior month, not current in-progress month."""
+        monthly = _make_htf_df(n=24, freq="ME", start="2019-01-31")
+        params = B1Params()
+        arrays = _prepare_htf(monthly, params)
+
+        # Trigger in March 2020.
+        trigger_date = pd.Timestamp("2020-03-15")
+        cutoff = _monthly_cutoff(trigger_date)  # Feb 29, 2020
+
+        idx = int(np.searchsorted(arrays[0], np.datetime64(cutoff), side="right")) - 1
+        bar_date = pd.Timestamp(arrays[0][idx])
+        assert bar_date.month == 2
+        assert bar_date.year == 2020
+
+    def test_no_lookahead(self):
+        """Future weekly bars with a strong uptrend don't affect past lookups."""
+        n = 40
+        dates = pd.date_range("2019-01-04", periods=n, freq="W-FRI")
+        close = np.concatenate([
+            np.linspace(200, 150, 20),  # downtrend first half
+            np.linspace(150, 250, 20),  # uptrend second half
+        ])
+        weekly = pd.DataFrame({
+            "Date": dates,
+            "Open": close - 1,
+            "High": close + 2,
+            "Low": close - 2,
+            "Close": close,
+            "Volume": np.full(n, 50000.0),
+        })
+        params = B1Params()
+        arrays = _prepare_htf(weekly, params)
+
+        # Trigger in the downtrend period — future bars must not be used.
+        trigger_date = pd.Timestamp(dates[19])  # last downtrend bar
+        result = _htf_aligned(*arrays, trigger_date, params.slope_threshold)
+        assert result is False
+
+    def test_flags_none_without_htf_data(self):
+        """Triggers have None MTFA flags when no HTF data provided."""
+        df = _make_perfect_b1()
+        params = B1Params()
+        compute_indicators(df, params)
+        triggers = detect_triggers(df, "/PA", "daily", params)
+        for t in triggers:
+            assert t.weekly_trend_aligned is None
+            assert t.monthly_trend_aligned is None
+
+    def test_insufficient_history_returns_false(self):
+        """Too few HTF bars for slope computation -> flag is False."""
+        weekly = _make_htf_df(n=5, freq="W-FRI")
+        params = B1Params()
+        arrays = _prepare_htf(weekly, params)
+
+        trigger_date = pd.Timestamp(weekly["Date"].iloc[-1])
+        result = _htf_aligned(*arrays, trigger_date, params.slope_threshold)
+        assert result is False
+
+    def test_integration_flags_set_on_trigger(self):
+        """detect_triggers with HTF data sets MTFA flags on triggers."""
+        df = _make_perfect_b1()
+        params = B1Params()
+        compute_indicators(df, params)
+
+        # Create uptrending weekly/monthly data spanning the daily data's range.
+        weekly = _make_htf_df(
+            n=100, freq="W-FRI", start="2017-12-08", trend_slope=3.0,
+        )
+        monthly = _make_htf_df(
+            n=30, freq="ME", start="2017-12-31", trend_slope=10.0,
+        )
+
+        triggers = detect_triggers(df, "/PA", "daily", params, weekly, monthly)
+        confirmed = [t for t in triggers if t.confirmed]
+
+        assert len(confirmed) >= 1
+        for t in confirmed:
+            # With strong uptrends and enough history, both should be True.
+            assert t.weekly_trend_aligned is True
+            assert t.monthly_trend_aligned is True
