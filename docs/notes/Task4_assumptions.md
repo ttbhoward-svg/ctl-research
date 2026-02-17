@@ -2,7 +2,9 @@
 
 ## Purge Gap
 
-1. **Calendar days, not trading days**: `purge_gap_days` is implemented as calendar days (matching the config field name `purge_gap_days: 30`). The spec text says "30 trading days" — for strict equivalence, increase the config value to ~45 calendar days. Calendar days is the more conservative direction (purges fewer training samples than intended, but this is easily tunable).
+1. **Calendar days, not trading days**: `purge_gap_days` is implemented as calendar days (matching the config field name `purge_gap_days: 30`). The locked spec requires the purge gap in **trading days** ("purge >= max holding period, default 30 trading days" — Phase Gate Checklist v2; "TimeSeriesSplit, 30-day purge gap (≥ max holding period per Codex)" — Tracker v3). The current implementation uses a calendar-day approximation, which is **temporary** — 30 calendar days ≈ 21 trading days, under-purging by ~30%.
+
+   **TODO: Before any Gate decision relies on CV results, switch `PurgedTimeSeriesSplit` to trading-day purge logic** (either accept a trading-day calendar / exchange holidays list, or convert internally using `pd.bdate_range`). Until then, set `purge_gap_days: 45` in config to approximate 30 trading days conservatively.
 
 2. **Forward purge only**: Training observations near the test boundary are removed. No embargo on test observations — walk-forward expanding windows don't re-use test data in subsequent folds.
 
