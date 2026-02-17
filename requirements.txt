@@ -5,3 +5,6 @@ pyyaml
 plotly
 streamlit
 pytest
+yfinance
+pyarrow
+exchange-calendars
