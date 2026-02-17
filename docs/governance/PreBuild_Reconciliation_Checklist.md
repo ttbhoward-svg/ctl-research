@@ -4,11 +4,13 @@
 Resolve cross-document parameter drift before coding starts. Update all listed files, then mark this checklist complete.
 
 ## Canonical Source Order
-1. `/Users/ttbhoward/Downloads/Final Spec ready for building/CTL_Phase_Gate_Checklist_v2.md`
-2. `/Users/ttbhoward/Downloads/Final Spec ready for building/CTL_Final_PreBuild_Status 2026-02-17.md`
-3. `/Users/ttbhoward/Downloads/Final Spec ready for building/CTL_Phase1a_Project_Tracker_v3.md`
-4. `/Users/ttbhoward/Downloads/Final Spec ready for building/CTL_Research_Infrastructure_Synthesis_v2.md`
-5. `/Users/ttbhoward/Downloads/Final Spec ready for building/B1_Strategy_Logic_Spec_v2.md`
+> **Path correction:** Folder is `/Users/ttbhoward/Downloads/Final spec ready to build/` (not "Final Spec ready for building").
+
+1. `/Users/ttbhoward/Downloads/Final spec ready to build/CTL_Phase_Gate_Checklist_v2.md`
+2. `/Users/ttbhoward/Downloads/Final spec ready to build/CTL_Final_PreBuild_Status.md`
+3. `/Users/ttbhoward/Downloads/Final spec ready to build/CTL_Phase1a_Project_Tracker_v3.md`
+4. `/Users/ttbhoward/Downloads/Final spec ready to build/CTL_Research_Infrastructure_Synthesis_v2.md`
+5. `/Users/ttbhoward/Downloads/Final spec ready to build/B1_Strategy_Logic_Spec_v2.md`
 
 ---
 
@@ -19,8 +21,8 @@ Resolve cross-document parameter drift before coding starts. Update all listed f
 - Phase B DD brakes: **5% / 10% / 15%**
 
 ### Conflicts found
-- `/Users/ttbhoward/Downloads/Final Spec ready for building/CTL_Research_Infrastructure_Synthesis_v2.md:898` references **$7,500 SAN cap** and older brake framing.
-- `/Users/ttbhoward/Downloads/Final Spec ready for building/CTL_Final_PreBuild_Status 2026-02-17.md:198-204` uses **$11,000** and current brakes.
+- `/Users/ttbhoward/Downloads/Final spec ready to build/CTL_Research_Infrastructure_Synthesis_v2.md:898` references **$7,500 SAN cap** and older brake framing.
+- `/Users/ttbhoward/Downloads/Final spec ready to build/CTL_Final_PreBuild_Status 2026-02-17.md:198-204` uses **$11,000** and current brakes.
 
 ### Action
 - Replace all older SAN/brace values in synthesis with canonical values above.
@@ -33,8 +35,8 @@ Resolve cross-document parameter drift before coding starts. Update all listed f
 - Capital infusion prerequisite should reference same strict threshold unless explicitly downgraded by future gate revision.
 
 ### Conflicts found
-- `/Users/ttbhoward/Downloads/Final Spec ready for building/CTL_Phase_Gate_Checklist_v2.md:44` uses **+1.0R**.
-- `/Users/ttbhoward/Downloads/Final Spec ready for building/CTL_Research_Infrastructure_Synthesis_v2.md:338` mentions **>=0.8R** in infusion section.
+- `/Users/ttbhoward/Downloads/Final spec ready to build/CTL_Phase_Gate_Checklist_v2.md:44` uses **+1.0R**.
+- `/Users/ttbhoward/Downloads/Final spec ready to build/CTL_Research_Infrastructure_Synthesis_v2.md:338` mentions **>=0.8R** in infusion section.
 
 ### Action
 - Standardize to one number (recommend +1.0R) across all docs.
@@ -137,14 +139,17 @@ Option A (recommended for simplicity):
 ---
 
 ## Completion Log
-- [ ] Item 1 resolved
-- [ ] Item 2 resolved
-- [ ] Item 3 resolved
-- [ ] Item 4 resolved
-- [ ] Item 5 resolved
-- [ ] Item 6 resolved
-- [ ] Item 7 resolved
-- [ ] Item 8 decision logged
-- [ ] Item 9 resolved
-- [ ] Item 10 completed
+- [x] Item 1 resolved — SAN cap $11,000 / DD brakes 10/15/20% (Phase A), 5/10/15% (Phase B) — all docs aligned. No $7,500 remnants.
+- [x] Item 2 resolved — OOS spread +1.0R standardized across all docs including capital infusion section. No >=0.8R remnants.
+- [x] Item 3 resolved — "9 candidates + 1 cluster control (frozen)" in Gate Checklist, Tracker, Synthesis, B1 Logic Spec. No variant phrasing.
+- [x] Item 4 resolved — Explicit "Execution Conventions" paragraph in B1_Strategy_Logic_Spec_v2.md (lines 174-185). Close-based stop, next-bar open + slippage fill, TP at level.
+- [x] Item 5 resolved — Purge gap = 30 trading days in all docs. No 44-day references found.
+- [x] Item 6 resolved — 29 symbols (28T+1R) in all docs. No stale "20 symbols" / "6 symbols" / "$RKLB" references.
+- [x] Item 7 resolved — Research column governance rule present in Gate Checklist (line 24), Tracker (line 395), Synthesis (line 281).
+- [x] Item 8 decision logged — Entry degradation tolerances (≤25%/≤5pp/≤30%) kept as-is, marked "Phase 1a exploratory tolerance" in Gate Checklist (line 49). Tighten decision deferred to Gate 5.
+- [x] Item 9 resolved — All forward-looking "Lasso" references changed to "Elastic Net". Only historical/educational context retained.
+- [x] Item 10 completed — Final Lock Summary generated with SHA-256 hashes for all 5 docs. Hashes verified 2026-02-17.
+
+**Verification date:** 2026-02-17
+**Verified by:** Claude Code (cross-checked all source docs + SHA-256 hashes)
 
