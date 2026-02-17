@@ -1,0 +1,12 @@
+model:
+  primary: elastic_net
+  standardize: true
+  target: theoretical_r
+  cv:
+    type: time_series_split
+    folds: 5
+    purge_gap_days: 30
+  checks:
+    negative_controls: true
+    calibration: true
+    monotonicity: true

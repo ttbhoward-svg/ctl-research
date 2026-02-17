@@ -1,0 +1,11 @@
+tradable:
+  idx_fut: ["/ES", "/NQ", "/YM", "/RTY"]
+  metals_fut: ["/PA", "/GC", "/SI", "/HG", "/PL"]
+  energy_fut: ["/CL", "/NG"]
+  rates_fut: ["/ZB", "/ZN"]
+  grains_fut: ["/ZC", "/ZS"]
+  etf_sector: ["XLE", "XME", "GDX", "XLF", "XLI", "XLK", "XLY"]
+  eq_commodity_linked: ["XOM", "FCX", "NEM", "CAT"]
+  eq_macro_bellwether: ["GS", "MU"]
+research_only:
+  eq_commodity_linked: ["SBSW"]

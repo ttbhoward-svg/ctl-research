@@ -1,0 +1,11 @@
+phase: phase1a
+strategy: B1
+start_date: "2018-01-01"
+end_date: "2024-12-31"
+bar_timeframes: ["1D", "1W"]
+purge_gap_days: 30
+oos_min_trades: 30
+feature_cap_statement: "9 candidates + 1 cluster control (frozen)"
+slippage_ticks_test: [0, 1, 2, 3]
+entry_degradation_pct: 0.30
+entry_degradation_seed: 42
