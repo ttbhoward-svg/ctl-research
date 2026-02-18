@@ -1,0 +1,295 @@
+# CTL Phase 1a — Cross-Provider Symbol Map (v1)
+#
+# Maps all 29 CTL canonical symbols to their provider-specific identifiers.
+# Providers: TradeStation, Databento, Norgate, IBKR.
+#
+# CTL canonical naming:
+#   Futures  → slash prefix (/ES)
+#   Equities → no prefix (XOM)
+#   ETFs     → no prefix (XLE)
+
+version: 1
+
+providers:
+  - tradestation
+  - databento
+  - norgate
+  - ibkr
+
+symbols:
+  # === Index Futures (4) ===
+  /ES:
+    asset_class: futures
+    cluster: IDX_FUT
+    status: tradable
+    providers:
+      tradestation: "@ES"
+      databento: "ES.FUT"
+      norgate: "&ES"
+      ibkr: "ES"
+  /NQ:
+    asset_class: futures
+    cluster: IDX_FUT
+    status: tradable
+    providers:
+      tradestation: "@NQ"
+      databento: "NQ.FUT"
+      norgate: "&NQ"
+      ibkr: "NQ"
+  /YM:
+    asset_class: futures
+    cluster: IDX_FUT
+    status: tradable
+    providers:
+      tradestation: "@YM"
+      databento: "YM.FUT"
+      norgate: "&YM"
+      ibkr: "YM"
+  /RTY:
+    asset_class: futures
+    cluster: IDX_FUT
+    status: tradable
+    providers:
+      tradestation: "@RTY"
+      databento: "RTY.FUT"
+      norgate: "&RTY"
+      ibkr: "RTY"
+
+  # === Metals Futures (5) ===
+  /PA:
+    asset_class: futures
+    cluster: METALS_FUT
+    status: tradable
+    providers:
+      tradestation: "@PA"
+      databento: "PA.FUT"
+      norgate: "&PA"
+      ibkr: "PA"
+  /GC:
+    asset_class: futures
+    cluster: METALS_FUT
+    status: tradable
+    providers:
+      tradestation: "@GC"
+      databento: "GC.FUT"
+      norgate: "&GC"
+      ibkr: "GC"
+  /SI:
+    asset_class: futures
+    cluster: METALS_FUT
+    status: tradable
+    providers:
+      tradestation: "@SI"
+      databento: "SI.FUT"
+      norgate: "&SI"
+      ibkr: "SI"
+  /HG:
+    asset_class: futures
+    cluster: METALS_FUT
+    status: tradable
+    providers:
+      tradestation: "@HG"
+      databento: "HG.FUT"
+      norgate: "&HG"
+      ibkr: "HG"
+  /PL:
+    asset_class: futures
+    cluster: METALS_FUT
+    status: tradable
+    providers:
+      tradestation: "@PL"
+      databento: "PL.FUT"
+      norgate: "&PL"
+      ibkr: "PL"
+
+  # === Energy Futures (2) ===
+  /CL:
+    asset_class: futures
+    cluster: ENERGY_FUT
+    status: tradable
+    providers:
+      tradestation: "@CL"
+      databento: "CL.FUT"
+      norgate: "&CL"
+      ibkr: "CL"
+  /NG:
+    asset_class: futures
+    cluster: ENERGY_FUT
+    status: tradable
+    providers:
+      tradestation: "@NG"
+      databento: "NG.FUT"
+      norgate: "&NG"
+      ibkr: "NG"
+
+  # === Rates Futures (2) ===
+  /ZB:
+    asset_class: futures
+    cluster: RATES_FUT
+    status: tradable
+    providers:
+      tradestation: "@ZB"
+      databento: "ZB.FUT"
+      norgate: "&ZB"
+      ibkr: "ZB"
+  /ZN:
+    asset_class: futures
+    cluster: RATES_FUT
+    status: tradable
+    providers:
+      tradestation: "@ZN"
+      databento: "ZN.FUT"
+      norgate: "&ZN"
+      ibkr: "ZN"
+
+  # === Grains Futures (2) ===
+  /ZC:
+    asset_class: futures
+    cluster: GRAINS_FUT
+    status: tradable
+    providers:
+      tradestation: "@ZC"
+      databento: "ZC.FUT"
+      norgate: "&ZC"
+      ibkr: "ZC"
+  /ZS:
+    asset_class: futures
+    cluster: GRAINS_FUT
+    status: tradable
+    providers:
+      tradestation: "@ZS"
+      databento: "ZS.FUT"
+      norgate: "&ZS"
+      ibkr: "ZS"
+
+  # === Sector ETFs (7) ===
+  XLE:
+    asset_class: etf
+    cluster: ETF_SECTOR
+    status: tradable
+    providers:
+      tradestation: "XLE"
+      databento: "XLE"
+      norgate: "XLE"
+      ibkr: "XLE"
+  XME:
+    asset_class: etf
+    cluster: ETF_SECTOR
+    status: tradable
+    providers:
+      tradestation: "XME"
+      databento: "XME"
+      norgate: "XME"
+      ibkr: "XME"
+  GDX:
+    asset_class: etf
+    cluster: ETF_SECTOR
+    status: tradable
+    providers:
+      tradestation: "GDX"
+      databento: "GDX"
+      norgate: "GDX"
+      ibkr: "GDX"
+  XLF:
+    asset_class: etf
+    cluster: ETF_SECTOR
+    status: tradable
+    providers:
+      tradestation: "XLF"
+      databento: "XLF"
+      norgate: "XLF"
+      ibkr: "XLF"
+  XLI:
+    asset_class: etf
+    cluster: ETF_SECTOR
+    status: tradable
+    providers:
+      tradestation: "XLI"
+      databento: "XLI"
+      norgate: "XLI"
+      ibkr: "XLI"
+  XLK:
+    asset_class: etf
+    cluster: ETF_SECTOR
+    status: tradable
+    providers:
+      tradestation: "XLK"
+      databento: "XLK"
+      norgate: "XLK"
+      ibkr: "XLK"
+  XLY:
+    asset_class: etf
+    cluster: ETF_SECTOR
+    status: tradable
+    providers:
+      tradestation: "XLY"
+      databento: "XLY"
+      norgate: "XLY"
+      ibkr: "XLY"
+
+  # === Commodity-Linked Equities (4 tradable + 1 research_only) ===
+  XOM:
+    asset_class: equity
+    cluster: EQ_COMMODITY_LINKED
+    status: tradable
+    providers:
+      tradestation: "$XOM"
+      databento: "XOM"
+      norgate: "XOM"
+      ibkr: "XOM"
+  FCX:
+    asset_class: equity
+    cluster: EQ_COMMODITY_LINKED
+    status: tradable
+    providers:
+      tradestation: "$FCX"
+      databento: "FCX"
+      norgate: "FCX"
+      ibkr: "FCX"
+  NEM:
+    asset_class: equity
+    cluster: EQ_COMMODITY_LINKED
+    status: tradable
+    providers:
+      tradestation: "$NEM"
+      databento: "NEM"
+      norgate: "NEM"
+      ibkr: "NEM"
+  CAT:
+    asset_class: equity
+    cluster: EQ_COMMODITY_LINKED
+    status: tradable
+    providers:
+      tradestation: "$CAT"
+      databento: "CAT"
+      norgate: "CAT"
+      ibkr: "CAT"
+  SBSW:
+    asset_class: equity
+    cluster: EQ_COMMODITY_LINKED
+    status: research_only
+    providers:
+      tradestation: "$SBSW"
+      databento: "SBSW"
+      norgate: "SBSW"
+      ibkr: "SBSW"
+
+  # === Macro Bellwether Equities (2) ===
+  GS:
+    asset_class: equity
+    cluster: EQ_MACRO_BELLWETHER
+    status: tradable
+    providers:
+      tradestation: "$GS"
+      databento: "GS"
+      norgate: "GS"
+      ibkr: "GS"
+  MU:
+    asset_class: equity
+    cluster: EQ_MACRO_BELLWETHER
+    status: tradable
+    providers:
+      tradestation: "$MU"
+      databento: "MU"
+      norgate: "MU"
+      ibkr: "MU"

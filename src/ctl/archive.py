@@ -29,6 +29,7 @@ from typing import Dict, List, Optional
 DEFAULT_ARTIFACTS = [
     "configs/pre_registration_v1.yaml",
     "configs/phase1a.yaml",
+    "configs/symbol_map_v1.yaml",
     "docs/governance/model_card_v1.md",
     "docs/governance/phase_gate_decision_v1.md",
     "docs/governance/CTL_Phase_Gate_Checklist_One_Page.md",
