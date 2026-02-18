@@ -37,6 +37,7 @@ class B1Params:
     swing_lookback_weekly: int = 12
     atr_period: int = 14
     williams_r_period: int = 10
+    gap_scan_window: int = 100
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +78,15 @@ class B1Trigger:
 
     # Flags
     expired: bool = False
+
+    # Confluence flags (Spec §8) — computed at trigger time
+    wr_divergence: bool = False
+    clean_pullback: bool = False
+    volume_declining: bool = False
+    gap_fill_below: bool = False
+    multi_year_highs: bool = False
+    single_bar_pullback: bool = False
+    fib_confluence: Optional[bool] = None   # None if weekly data not provided
 
     # MTFA flags (Spec §9) — None if HTF data not provided
     weekly_trend_aligned: Optional[bool] = None
@@ -207,6 +217,162 @@ def _htf_aligned(
     return bool(s >= slope_threshold and c > e)
 
 
+# ---------------------------------------------------------------------------
+# Confluence flag helpers (Spec §8)
+# ---------------------------------------------------------------------------
+
+def _wr_divergence(
+    lows: np.ndarray,
+    wr: np.ndarray,
+    ema10: np.ndarray,
+    n: int,
+    max_lookback: int = 100,
+) -> bool:
+    """Williams %R bullish divergence (Spec §8.1).
+
+    Find the most recent bar before N where Low <= EMA10 (prior EMA touch).
+    Divergence = price made a lower/equal low but %R made a higher low.
+    """
+    for i in range(1, max_lookback + 1):
+        j = n - i
+        if j < 0:
+            return False
+        if lows[j] <= ema10[j]:
+            # Found prior touch at bar j.
+            if np.isnan(wr[n]) or np.isnan(wr[j]):
+                return False
+            return bool(wr[n] > wr[j] and lows[n] <= lows[j])
+    return False
+
+
+def _clean_pullback(highs: np.ndarray, lows: np.ndarray, n: int) -> bool:
+    """Three bars of orderly stair-step decline (Spec §8.2).
+
+    CleanPullback = High[N-1] < High[N-2] < High[N-3]
+                AND Low[N-1]  < Low[N-2]  < Low[N-3]
+    """
+    if n < 3:
+        return False
+    return bool(
+        highs[n - 1] < highs[n - 2] < highs[n - 3]
+        and lows[n - 1] < lows[n - 2] < lows[n - 3]
+    )
+
+
+def _volume_declining(volumes: np.ndarray, n: int) -> bool:
+    """Recent 3-bar avg volume < prior 3-bar avg volume (Spec §8.3)."""
+    if n < 6:
+        return False
+    recent = (volumes[n - 1] + volumes[n - 2] + volumes[n - 3]) / 3.0
+    prior = (volumes[n - 4] + volumes[n - 5] + volumes[n - 6]) / 3.0
+    if np.isnan(recent) or np.isnan(prior) or prior == 0:
+        return False
+    return bool(recent < prior)
+
+
+def _gap_fill_below(
+    opens: np.ndarray,
+    closes: np.ndarray,
+    highs: np.ndarray,
+    stop_price: float,
+    n: int,
+    scan_window: int,
+) -> bool:
+    """Unfilled gap-down within 2% below StopPrice (Spec §8.4)."""
+    for i in range(1, scan_window + 1):
+        j = n - i
+        if j < 1:
+            break
+        if opens[j] < closes[j - 1]:  # gap down
+            gap_top = closes[j - 1]
+            gap_bottom = opens[j]
+            # Gap bottom within 2% below stop.
+            if gap_bottom < stop_price and gap_bottom >= stop_price * 0.98:
+                # Check if gap has been filled between j and N.
+                filled = False
+                for k in range(j, n + 1):
+                    if highs[k] >= gap_top:
+                        filled = True
+                        break
+                if not filled:
+                    return True
+    return False
+
+
+def _multi_year_highs(
+    highs: np.ndarray,
+    swing_high: float,
+    n: int,
+    lookback: int = 252,
+    threshold: float = 0.95,
+) -> bool:
+    """SwingHigh within 5% of 252-day high (Spec §8.5)."""
+    if n < 1:
+        return False
+    start = max(0, n - lookback)
+    yearly_high = float(np.nanmax(highs[start:n]))
+    if np.isnan(yearly_high):
+        return False
+    return bool(swing_high >= yearly_high * threshold)
+
+
+def _single_bar_pullback(
+    highs: np.ndarray,
+    n: int,
+    swing_lookback: int,
+) -> bool:
+    """Bar N-1 is the swing high — only 1 bar of pullback (Spec §8.7).
+
+    Caution flag, not positive confluence.
+    """
+    if n < 1:
+        return False
+    start = max(0, n - swing_lookback)
+    window_max = float(np.nanmax(highs[start:n]))
+    if np.isnan(window_max):
+        return False
+    return bool(highs[n - 1] == window_max)
+
+
+def _fib_confluence(
+    tp1: float,
+    weekly_dates: np.ndarray,
+    weekly_highs: np.ndarray,
+    weekly_lows: np.ndarray,
+    trigger_date: pd.Timestamp,
+    swing_lookback: int,
+    tolerance: float = 0.01,
+) -> bool:
+    """Daily TP1 aligns with weekly 0.618 fib level (Spec §8.6).
+
+    Uses ``swing_lookback * 2`` weekly bars for HTF swing range.
+    """
+    idx = int(
+        np.searchsorted(weekly_dates, np.datetime64(trigger_date), side="right")
+    ) - 1
+    if idx < 0:
+        return False
+
+    window = swing_lookback * 2
+    start = max(0, idx - window + 1)
+
+    htf_high = float(np.nanmax(weekly_highs[start : idx + 1]))
+    htf_low = float(np.nanmin(weekly_lows[start : idx + 1]))
+    if np.isnan(htf_high) or np.isnan(htf_low):
+        return False
+
+    rng = htf_high - htf_low
+    if rng <= 0:
+        return False
+
+    htf_fib618 = htf_low + rng * 0.618
+
+    if tp1 <= 0 or np.isnan(tp1):
+        return False
+
+    return bool(abs(tp1 - htf_fib618) / tp1 < tolerance)
+
+
 def detect_triggers(
     df: pd.DataFrame,
     symbol: str,
@@ -245,6 +411,16 @@ def detect_triggers(
     weekly_arrays = _prepare_htf(weekly_df, params) if weekly_df is not None else None
     monthly_arrays = _prepare_htf(monthly_df, params) if monthly_df is not None else None
 
+    # Prepare weekly swing data for FibConfluence (Spec §8.6).
+    weekly_swing: tuple | None = None
+    if weekly_df is not None:
+        w_sorted = weekly_df.sort_values("Date").reset_index(drop=True)
+        weekly_swing = (
+            w_sorted["Date"].values,
+            w_sorted["High"].values.astype(float),
+            w_sorted["Low"].values.astype(float),
+        )
+
     swing_lookback = (
         params.swing_lookback_daily
         if timeframe == "daily"
@@ -260,6 +436,8 @@ def detect_triggers(
     ema10 = df["EMA10"].values.astype(float)
     atr14 = df["ATR14"].values.astype(float)
     slope20 = df["Slope_20"].values.astype(float)
+    volumes = df["Volume"].values.astype(float)
+    wr = df["WilliamsR"].values.astype(float)
     n_bars = len(df)
 
     # Warmup: need at least slope_lookback + ema warmup bars.
@@ -372,6 +550,20 @@ def detect_triggers(
             tp4=stop + rng * 1.618,
             tp5=stop + rng * 2.618,
         )
+
+        # Confluence flags (Spec §8).
+        trig.wr_divergence = _wr_divergence(lows, wr, ema10, n)
+        trig.clean_pullback = _clean_pullback(highs, lows, n)
+        trig.volume_declining = _volume_declining(volumes, n)
+        trig.gap_fill_below = _gap_fill_below(
+            opens, closes, highs, stop, n, params.gap_scan_window,
+        )
+        trig.multi_year_highs = _multi_year_highs(highs, swing_high, n)
+        trig.single_bar_pullback = _single_bar_pullback(highs, n, swing_lookback)
+        if weekly_swing is not None:
+            trig.fib_confluence = _fib_confluence(
+                trig.tp1, *weekly_swing, trig.trigger_date, swing_lookback,
+            )
 
         # Annotate MTFA flags (Spec §9).
         if weekly_arrays is not None:
