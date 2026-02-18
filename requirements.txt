@@ -8,3 +8,4 @@ pytest
 yfinance
 pyarrow
 exchange-calendars
+matplotlib
