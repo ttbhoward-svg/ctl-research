@@ -92,6 +92,11 @@ class B1Trigger:
     weekly_trend_aligned: Optional[bool] = None
     monthly_trend_aligned: Optional[bool] = None
 
+    # External features (Task 7) — set by external_merge, not by detector
+    cot_20d_delta: Optional[float] = None
+    cot_zscore_1y: Optional[float] = None
+    vix_regime: Optional[bool] = None
+
 
 # ---------------------------------------------------------------------------
 # Indicator pre-computation
