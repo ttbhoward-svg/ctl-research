@@ -11,15 +11,20 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from ctl.continuous_builder import (
+    ADJUSTMENT_CONVENTIONS,
     CONTRACT_RE,
     MONTH_CODES,
     YEAR_MAP,
+    CalibrationResult,
+    ConventionScore,
     ContractSpec,
     ContinuousResult,
     RollEvent,
+    _build_roll_log,
     apply_panama_adjustment,
     build_all,
     build_continuous,
+    calibrate_convention,
     detect_rolls,
     load_contract_data,
     parse_contracts,
@@ -640,7 +645,7 @@ class TestBuildContinuousSynthetic:
         if not result.roll_log.empty:
             expected_cols = {"date", "from_contract", "to_contract",
                              "from_close", "to_close", "adjustment",
-                             "cumulative_adjustment"}
+                             "cumulative_adjustment", "active_contract_count"}
             assert set(result.roll_log.columns) == expected_cols
 
 
@@ -733,3 +738,466 @@ class TestConstants:
     def test_year_map_no_overlap(self):
         # All mapped years should be unique.
         assert len(set(YEAR_MAP.values())) == len(YEAR_MAP)
+
+
+# ---------------------------------------------------------------------------
+# Tests: Adjustment convention (Task F hotfix)
+# ---------------------------------------------------------------------------
+
+class TestAdjustmentConvention:
+    """Test that the adjustment convention parameter works correctly."""
+
+    def test_subtract_is_default(self):
+        """Default convention should be 'subtract' (backward-compatible)."""
+        df = _make_contract_df("ESH5", "2024-01-02", 50)
+        contracts = {"ESH5": df}
+        active = pd.DataFrame({"date": df["date"], "contract": "ESH5"})
+        result_default = apply_panama_adjustment(contracts, active, [])
+        result_subtract = apply_panama_adjustment(contracts, active, [], convention="subtract")
+        pd.testing.assert_frame_equal(result_default, result_subtract)
+
+    def test_invalid_convention_raises(self):
+        with pytest.raises(ValueError, match="Unknown convention"):
+            apply_panama_adjustment({}, pd.DataFrame(columns=["date", "contract"]),
+                                    [], convention="invalid")
+
+    def test_subtract_lowers_historical_when_new_higher(self):
+        """With subtract convention: when new contract is higher, historical
+        prices are shifted down."""
+        contracts, order = _two_contract_setup(
+            front_base=100.0,
+            back_base=110.0,
+            front_vol_start=50000,
+            back_vol_start=10000,
+            front_vol_trend=-3000,
+            back_vol_trend=5000,
+        )
+        rolls, active = detect_rolls(contracts, order)
+        result = apply_panama_adjustment(contracts, active, rolls, convention="subtract")
+        pre_roll = result[result["adjustment"] != 0.0]
+        if not pre_roll.empty:
+            row = pre_roll.iloc[0]
+            raw = contracts[row["contract"]]
+            raw_bar = raw[raw["date"] == row["Date"].date()].iloc[0]
+            # Subtract convention: adjusted = raw - adj
+            assert row["Close"] < raw_bar["close"]  # shifted down
+
+    def test_add_raises_historical_when_new_higher(self):
+        """With add convention: when new contract is higher, historical
+        prices are shifted up."""
+        contracts, order = _two_contract_setup(
+            front_base=100.0,
+            back_base=110.0,
+            front_vol_start=50000,
+            back_vol_start=10000,
+            front_vol_trend=-3000,
+            back_vol_trend=5000,
+        )
+        rolls, active = detect_rolls(contracts, order)
+        result = apply_panama_adjustment(contracts, active, rolls, convention="add")
+        pre_roll = result[result["adjustment"] != 0.0]
+        if not pre_roll.empty:
+            row = pre_roll.iloc[0]
+            raw = contracts[row["contract"]]
+            raw_bar = raw[raw["date"] == row["Date"].date()].iloc[0]
+            # Add convention: adjusted = raw + adj
+            assert row["Close"] > raw_bar["close"]  # shifted up
+
+    def test_conventions_produce_different_results(self):
+        """subtract and add should give different prices when there are rolls."""
+        contracts, order = _two_contract_setup(
+            front_base=100.0,
+            back_base=110.0,
+            front_vol_start=50000,
+            back_vol_start=10000,
+            front_vol_trend=-3000,
+            back_vol_trend=5000,
+        )
+        rolls_a, active = detect_rolls(contracts, order)
+        # Need fresh roll objects for each call (cumulative state is mutated).
+        rolls_b = [RollEvent(date=r.date, from_contract=r.from_contract,
+                             to_contract=r.to_contract, from_close=r.from_close,
+                             to_close=r.to_close, adjustment=r.adjustment)
+                    for r in rolls_a]
+        result_sub = apply_panama_adjustment(contracts, active, rolls_a, convention="subtract")
+        result_add = apply_panama_adjustment(contracts, active, rolls_b, convention="add")
+        # Pre-roll Close values should differ.
+        pre_sub = result_sub[result_sub["adjustment"] != 0.0]
+        pre_add = result_add[result_add["adjustment"] != 0.0]
+        if not pre_sub.empty and not pre_add.empty:
+            assert not np.allclose(pre_sub["Close"].values, pre_add["Close"].values)
+
+    def test_post_roll_prices_identical_both_conventions(self):
+        """Post-roll prices should be the same regardless of convention
+        (adjustment=0 for the latest segment)."""
+        contracts, order = _two_contract_setup(
+            front_base=100.0,
+            back_base=110.0,
+            front_vol_start=50000,
+            back_vol_start=10000,
+            front_vol_trend=-3000,
+            back_vol_trend=5000,
+        )
+        rolls_a, active = detect_rolls(contracts, order)
+        rolls_b = [RollEvent(date=r.date, from_contract=r.from_contract,
+                             to_contract=r.to_contract, from_close=r.from_close,
+                             to_close=r.to_close, adjustment=r.adjustment)
+                    for r in rolls_a]
+        result_sub = apply_panama_adjustment(contracts, active, rolls_a, convention="subtract")
+        result_add = apply_panama_adjustment(contracts, active, rolls_b, convention="add")
+        post_sub = result_sub[result_sub["adjustment"] == 0.0]
+        post_add = result_add[result_add["adjustment"] == 0.0]
+        if not post_sub.empty and not post_add.empty:
+            np.testing.assert_allclose(
+                post_sub["Close"].values, post_add["Close"].values, atol=1e-6
+            )
+
+    def test_build_continuous_convention_passthrough(self, tmp_path):
+        """build_continuous should accept and record convention."""
+        df = _make_contract_df("ESH5", "2024-11-01", 50,
+                               base_price=6000, base_volume=100000)
+        csv_path = tmp_path / "test.ESH5.csv.zst"
+        out = pd.DataFrame({
+            "ts_event": pd.to_datetime(df["date"]).astype(str),
+            "rtype": 0, "publisher_id": 0, "instrument_id": 0,
+            "open": df["open"], "high": df["high"], "low": df["low"],
+            "close": df["close"], "volume": df["volume"], "symbol": "ESH5",
+        })
+        out.to_csv(csv_path, index=False)
+        result = build_continuous("ES", tmp_path, convention="add")
+        assert result.convention == "add"
+
+
+# ---------------------------------------------------------------------------
+# Tests: ES-like synthetic case (inverted convention)
+# ---------------------------------------------------------------------------
+
+class TestESLikeInvertedConvention:
+    """Simulate ES-like scenario where the 'add' convention better matches
+    a reference series (TradeStation-style back-adjustment)."""
+
+    def _build_es_scenario(self):
+        """Build 3-contract ES chain with typical contango (each new
+        contract trades higher). The 'add' convention should produce
+        prices that match a reference built with additive-up adjustment.
+        """
+        # ESH4 → ESM4 → ESU4, each ~50 points higher.
+        front = _make_contract_df(
+            "ESH4", "2024-01-02", 60,
+            base_price=4800.0, base_volume=100000, trend=0.5,
+            volume_trend=-2000,
+        )
+        mid = _make_contract_df(
+            "ESM4", "2024-02-15", 60,
+            base_price=4850.0, base_volume=5000, trend=0.5,
+            volume_trend=3000,
+        )
+        back = _make_contract_df(
+            "ESU4", "2024-04-01", 60,
+            base_price=4900.0, base_volume=1000, trend=0.5,
+            volume_trend=2500,
+        )
+        # Force second roll: ESU4 volume overtakes ESM4.
+        for i in range(len(back)):
+            back.loc[i, "volume"] = 1000 + i * 5000
+        contracts = {"ESH4": front, "ESM4": mid, "ESU4": back}
+        order = parse_contracts(list(contracts.keys()))
+        return contracts, order
+
+    def test_add_convention_closer_to_additive_up_reference(self):
+        """Build a reference with add convention, verify calibration picks it."""
+        contracts, order = self._build_es_scenario()
+        rolls, active = detect_rolls(contracts, order)
+
+        # Build "reference" using add convention (simulating TradeStation).
+        rolls_ref = [RollEvent(date=r.date, from_contract=r.from_contract,
+                               to_contract=r.to_contract, from_close=r.from_close,
+                               to_close=r.to_close, adjustment=r.adjustment)
+                     for r in rolls]
+        ref = apply_panama_adjustment(contracts, active, rolls_ref, convention="add")
+        ref = ref.rename(columns={"Date": "Date", "Close": "Close"})
+
+        result = calibrate_convention(contracts, order, ref)
+        assert result.recommended == "add"
+        assert result.scores["add"].mean_close_diff < 1e-6
+        assert result.scores["subtract"].mean_close_diff > 1.0
+
+    def test_calibration_returns_both_scores(self):
+        contracts, order = self._build_es_scenario()
+        rolls, active = detect_rolls(contracts, order)
+        rolls_ref = [RollEvent(date=r.date, from_contract=r.from_contract,
+                               to_contract=r.to_contract, from_close=r.from_close,
+                               to_close=r.to_close, adjustment=r.adjustment)
+                     for r in rolls]
+        ref = apply_panama_adjustment(contracts, active, rolls_ref, convention="add")
+
+        result = calibrate_convention(contracts, order, ref)
+        assert "subtract" in result.scores
+        assert "add" in result.scores
+        assert result.scores["add"].overlap_bars > 0
+        assert result.scores["subtract"].overlap_bars > 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: CL-like dense monthly rolls
+# ---------------------------------------------------------------------------
+
+class TestCLLikeDenseRolls:
+    """CL rolls monthly. Test with a dense chain of 6+ contracts."""
+
+    def _build_cl_chain(self, n_contracts: int = 6):
+        """Build a CL-like chain with monthly rolls."""
+        month_codes = ["F", "G", "H", "J", "K", "M"]
+        contracts = {}
+        start_price = 70.0
+        for i, mc in enumerate(month_codes[:n_contracts]):
+            sym = f"CL{mc}4"
+            start_date = pd.Timestamp("2024-01-02") + pd.tseries.offsets.BDay(i * 20)
+            n_bars = 40
+            vol_start = 100000 - i * 15000 if i == 0 else 5000
+            vol_trend = -3000 if i == 0 else 4000
+            df = _make_contract_df(
+                sym, str(start_date.date()), n_bars,
+                base_price=start_price + i * 1.5,
+                base_volume=max(vol_start, 1000),
+                trend=0.05,
+                volume_trend=vol_trend if i < n_contracts - 1 else 0,
+            )
+            # For contracts after the first, ensure volume ramps up to
+            # overtake the previous.
+            if i > 0:
+                for j in range(len(df)):
+                    df.loc[j, "volume"] = 2000 + j * 6000
+            contracts[sym] = df
+        order = parse_contracts(list(contracts.keys()))
+        return contracts, order
+
+    def test_multiple_rolls_detected(self):
+        contracts, order = self._build_cl_chain(6)
+        rolls, active = detect_rolls(contracts, order)
+        # Dense chain should produce multiple rolls.
+        assert len(rolls) >= 2
+
+    def test_roll_log_has_active_contract_count(self):
+        contracts, order = self._build_cl_chain(6)
+        rolls, active = detect_rolls(contracts, order)
+        roll_log = _build_roll_log(rolls, len(contracts))
+        assert "active_contract_count" in roll_log.columns
+        if not roll_log.empty:
+            # Count should decrease with each roll.
+            counts = roll_log["active_contract_count"].tolist()
+            assert counts == sorted(counts, reverse=True)
+
+    def test_dense_chain_both_conventions_valid_schema(self):
+        contracts, order = self._build_cl_chain(6)
+        rolls_a, active = detect_rolls(contracts, order)
+        rolls_b = [RollEvent(date=r.date, from_contract=r.from_contract,
+                             to_contract=r.to_contract, from_close=r.from_close,
+                             to_close=r.to_close, adjustment=r.adjustment)
+                    for r in rolls_a]
+        for conv, rr in [("subtract", rolls_a), ("add", rolls_b)]:
+            result = apply_panama_adjustment(contracts, active, rr, convention=conv)
+            assert "Date" in result.columns
+            assert "Close" in result.columns
+            assert result["Date"].nunique() == len(result)
+            assert pd.api.types.is_datetime64_any_dtype(result["Date"])
+
+    def test_dense_chain_monotonic_dates(self):
+        contracts, order = self._build_cl_chain(6)
+        rolls, active = detect_rolls(contracts, order)
+        result = apply_panama_adjustment(contracts, active, rolls)
+        dates = result["Date"].values
+        assert (np.diff(dates) > np.timedelta64(0)).all()
+
+    def test_calibration_with_dense_rolls(self):
+        """Calibration should work with many rolls."""
+        contracts, order = self._build_cl_chain(6)
+        rolls, active = detect_rolls(contracts, order)
+        # Build reference using subtract.
+        rolls_ref = [RollEvent(date=r.date, from_contract=r.from_contract,
+                               to_contract=r.to_contract, from_close=r.from_close,
+                               to_close=r.to_close, adjustment=r.adjustment)
+                     for r in rolls]
+        ref = apply_panama_adjustment(contracts, active, rolls_ref, convention="subtract")
+        result = calibrate_convention(contracts, order, ref)
+        assert result.recommended == "subtract"
+        assert result.scores["subtract"].mean_close_diff < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Tests: Roll diagnostics
+# ---------------------------------------------------------------------------
+
+class TestRollDiagnostics:
+    def test_build_roll_log_schema(self):
+        rolls = [
+            RollEvent(
+                date=datetime.date(2024, 3, 15),
+                from_contract="CLF4", to_contract="CLG4",
+                from_close=72.0, to_close=73.5,
+                adjustment=1.5, cumulative_adjustment=3.0,
+            ),
+            RollEvent(
+                date=datetime.date(2024, 4, 15),
+                from_contract="CLG4", to_contract="CLH4",
+                from_close=74.0, to_close=75.0,
+                adjustment=1.0, cumulative_adjustment=1.0,
+            ),
+        ]
+        rl = _build_roll_log(rolls, n_contracts=4)
+        expected = {"date", "from_contract", "to_contract", "from_close",
+                    "to_close", "adjustment", "cumulative_adjustment",
+                    "active_contract_count"}
+        assert set(rl.columns) == expected
+        assert len(rl) == 2
+
+    def test_active_contract_count_decreasing(self):
+        rolls = [
+            RollEvent(date=datetime.date(2024, 3, 15),
+                      from_contract="A", to_contract="B",
+                      from_close=100, to_close=102, adjustment=2),
+            RollEvent(date=datetime.date(2024, 6, 15),
+                      from_contract="B", to_contract="C",
+                      from_close=104, to_close=105, adjustment=1),
+        ]
+        rl = _build_roll_log(rolls, n_contracts=5)
+        assert rl.iloc[0]["active_contract_count"] == 4  # 5 - 1
+        assert rl.iloc[1]["active_contract_count"] == 3  # 5 - 2
+
+    def test_empty_rolls_returns_empty_with_schema(self):
+        rl = _build_roll_log([], n_contracts=3)
+        assert rl.empty
+        assert "active_contract_count" in rl.columns
+
+
+# ---------------------------------------------------------------------------
+# Tests: Sanity guards in load_contract_data
+# ---------------------------------------------------------------------------
+
+class TestSanityGuards:
+    def _write_contract_csv(self, tmp_dir, symbol, df):
+        csv_path = tmp_dir / f"test.{symbol}.csv.zst"
+        out = pd.DataFrame({
+            "ts_event": pd.to_datetime(df["date"]).astype(str),
+            "rtype": 0, "publisher_id": 0, "instrument_id": 0,
+            "open": df["open"], "high": df["high"], "low": df["low"],
+            "close": df["close"], "volume": df["volume"], "symbol": symbol,
+        })
+        out.to_csv(csv_path, index=False)
+
+    def test_single_row_contract_skipped(self, tmp_path):
+        """Contracts with < 2 bars should be skipped."""
+        df = _make_contract_df("ESH5", "2024-01-02", 1)
+        self._write_contract_csv(tmp_path, "ESH5", df)
+        contracts = load_contract_data(tmp_path, "ES")
+        assert "ESH5" not in contracts
+
+    def test_zero_volume_contract_skipped(self, tmp_path):
+        """Contracts with all-zero volume should be skipped."""
+        df = _make_contract_df("ESH5", "2024-01-02", 10, base_volume=0)
+        self._write_contract_csv(tmp_path, "ESH5", df)
+        contracts = load_contract_data(tmp_path, "ES")
+        assert "ESH5" not in contracts
+
+    def test_valid_contract_still_loaded(self, tmp_path):
+        """Contracts with >= 2 bars and non-zero volume should load."""
+        df = _make_contract_df("ESH5", "2024-01-02", 50, base_volume=10000)
+        self._write_contract_csv(tmp_path, "ESH5", df)
+        contracts = load_contract_data(tmp_path, "ES")
+        assert "ESH5" in contracts
+        assert len(contracts["ESH5"]) == 50
+
+
+# ---------------------------------------------------------------------------
+# Tests: Deterministic output (hotfix)
+# ---------------------------------------------------------------------------
+
+class TestDeterministicHotfix:
+    def test_deterministic_subtract(self):
+        contracts, order = _two_contract_setup(
+            front_base=100.0, back_base=110.0,
+            front_vol_start=50000, back_vol_start=10000,
+            front_vol_trend=-3000, back_vol_trend=5000,
+        )
+        rolls1, active1 = detect_rolls(contracts, order)
+        rolls2, active2 = detect_rolls(contracts, order)
+        r1 = apply_panama_adjustment(contracts, active1, rolls1, convention="subtract")
+        r2 = apply_panama_adjustment(contracts, active2, rolls2, convention="subtract")
+        pd.testing.assert_frame_equal(r1, r2)
+
+    def test_deterministic_add(self):
+        contracts, order = _two_contract_setup(
+            front_base=100.0, back_base=110.0,
+            front_vol_start=50000, back_vol_start=10000,
+            front_vol_trend=-3000, back_vol_trend=5000,
+        )
+        rolls1, active1 = detect_rolls(contracts, order)
+        rolls2, active2 = detect_rolls(contracts, order)
+        r1 = apply_panama_adjustment(contracts, active1, rolls1, convention="add")
+        r2 = apply_panama_adjustment(contracts, active2, rolls2, convention="add")
+        pd.testing.assert_frame_equal(r1, r2)
+
+    def test_roll_log_schema_stable(self):
+        """Roll log columns should be the same across runs."""
+        contracts, order = _two_contract_setup(
+            front_base=100.0, back_base=110.0,
+            front_vol_start=50000, back_vol_start=10000,
+            front_vol_trend=-3000, back_vol_trend=5000,
+        )
+        rolls1, _ = detect_rolls(contracts, order)
+        rolls2, _ = detect_rolls(contracts, order)
+        rl1 = _build_roll_log(rolls1, len(contracts))
+        rl2 = _build_roll_log(rolls2, len(contracts))
+        assert list(rl1.columns) == list(rl2.columns)
+        pd.testing.assert_frame_equal(rl1, rl2)
+
+
+# ---------------------------------------------------------------------------
+# Tests: Calibration helper
+# ---------------------------------------------------------------------------
+
+class TestCalibrationHelper:
+    def test_no_overlap_returns_inf(self):
+        """If reference dates don't overlap with continuous, scores are inf."""
+        contracts, order = _two_contract_setup(
+            front_base=100.0, back_base=105.0,
+            front_vol_start=50000, back_vol_start=10000,
+            front_vol_trend=-3000, back_vol_trend=5000,
+        )
+        # Reference from a completely different date range.
+        ref = pd.DataFrame({
+            "Date": pd.bdate_range("2010-01-02", periods=100),
+            "Close": np.linspace(50, 60, 100),
+        })
+        result = calibrate_convention(contracts, order, ref)
+        for s in result.scores.values():
+            assert s.overlap_bars == 0
+            assert s.mean_close_diff == np.inf
+
+    def test_perfect_match_scores_zero(self):
+        """When reference is built with same convention, diff should be ~0."""
+        contracts, order = _two_contract_setup(
+            front_base=100.0, back_base=105.0,
+            front_vol_start=50000, back_vol_start=10000,
+            front_vol_trend=-3000, back_vol_trend=5000,
+        )
+        rolls, active = detect_rolls(contracts, order)
+        rolls_ref = [RollEvent(date=r.date, from_contract=r.from_contract,
+                               to_contract=r.to_contract, from_close=r.from_close,
+                               to_close=r.to_close, adjustment=r.adjustment)
+                     for r in rolls]
+        ref = apply_panama_adjustment(contracts, active, rolls_ref, convention="subtract")
+        result = calibrate_convention(contracts, order, ref)
+        assert result.recommended == "subtract"
+        assert result.scores["subtract"].mean_close_diff < 1e-6
+
+    def test_result_has_symbol(self):
+        contracts, order = _two_contract_setup()
+        rolls, active = detect_rolls(contracts, order)
+        rolls_ref = [RollEvent(date=r.date, from_contract=r.from_contract,
+                               to_contract=r.to_contract, from_close=r.from_close,
+                               to_close=r.to_close, adjustment=r.adjustment)
+                     for r in rolls]
+        ref = apply_panama_adjustment(contracts, active, rolls_ref, convention="subtract")
+        result = calibrate_convention(contracts, order, ref)
+        assert result.symbol == "ES"

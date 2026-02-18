@@ -4,6 +4,10 @@ Reads Databento outright contract CSVs, detects volume-based rolls,
 applies Panama-style additive back-adjustment, and outputs clean
 daily continuous series.
 
+Supports two adjustment conventions:
+- ``"subtract"`` (default): historical prices shifted DOWN when new > old.
+- ``"add"``: historical prices shifted UP when new > old.
+
 See docs/notes/TaskF_assumptions.md for design rationale.
 
 Usage
@@ -15,13 +19,16 @@ Usage
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -44,6 +51,14 @@ YEAR_MAP: Dict[str, int] = {
 
 #: Consecutive days of volume crossover required to trigger a roll.
 ROLL_CONSECUTIVE_DAYS = 2
+
+#: Supported adjustment conventions.
+#: "subtract" — historical OHLC = raw - cumulative_adj (default).
+#: "add"      — historical OHLC = raw + cumulative_adj (inverted).
+ADJUSTMENT_CONVENTIONS = ("subtract", "add")
+
+#: Type alias for adjustment convention.
+AdjustmentConvention = Literal["subtract", "add"]
 
 #: Contract code regex: root (1-3 uppercase letters) + month (1 letter) + year (1 digit).
 CONTRACT_RE = re.compile(r"^([A-Z]{1,3})([FGHJKMNQUVXZ])(\d)$")
@@ -119,14 +134,21 @@ def load_contract_data(
     contracts: Dict[str, pd.DataFrame] = {}
 
     for fpath in sorted(data_dir.glob("*.csv.zst")):
-        df = pd.read_csv(fpath)
+        try:
+            df = pd.read_csv(fpath)
+        except Exception as exc:
+            logger.warning("Skipping unreadable file %s: %s", fpath.name, exc)
+            continue
+
         if "symbol" not in df.columns or "ts_event" not in df.columns:
+            logger.debug("Skipping %s: missing symbol/ts_event columns", fpath.name)
             continue
 
         sym = df["symbol"].iloc[0]
         try:
             spec = ContractSpec.from_symbol(sym)
         except ValueError:
+            logger.debug("Skipping unparseable symbol '%s' in %s", sym, fpath.name)
             continue
         if spec.root != root:
             continue
@@ -136,6 +158,17 @@ def load_contract_data(
         df = df[["date", "open", "high", "low", "close", "volume"]].copy()
         df = df.sort_values("date").drop_duplicates(subset=["date"], keep="last")
         df = df.reset_index(drop=True)
+
+        # Sanity guard: skip empty or single-row contracts.
+        if len(df) < 2:
+            logger.debug("Skipping %s: only %d bars", sym, len(df))
+            continue
+
+        # Sanity guard: skip contracts with all-zero volume.
+        if (df["volume"] == 0).all():
+            logger.debug("Skipping %s: all-zero volume", sym)
+            continue
+
         contracts[sym] = df
 
     return contracts
@@ -253,6 +286,7 @@ def apply_panama_adjustment(
     contracts: Dict[str, pd.DataFrame],
     active_series: pd.DataFrame,
     rolls: List[RollEvent],
+    convention: AdjustmentConvention = "subtract",
 ) -> pd.DataFrame:
     """Apply additive back-adjustment to build the continuous series.
 
@@ -268,11 +302,18 @@ def apply_panama_adjustment(
         ``[date, contract]`` from ``detect_rolls``.
     rolls : list of RollEvent
         Roll events from ``detect_rolls``.
+    convention : {"subtract", "add"}
+        ``"subtract"`` (default): ``price = raw - cumulative_adj``.
+        ``"add"``: ``price = raw + cumulative_adj`` (inverted).
 
     Returns
     -------
     DataFrame with ``[Date, Open, High, Low, Close, Volume, contract, adjustment]``.
     """
+    if convention not in ADJUSTMENT_CONVENTIONS:
+        raise ValueError(
+            f"Unknown convention '{convention}'; expected one of {ADJUSTMENT_CONVENTIONS}"
+        )
     if active_series.empty:
         return pd.DataFrame(
             columns=["Date", "Open", "High", "Low", "Close", "Volume",
@@ -314,12 +355,13 @@ def apply_panama_adjustment(
                 adj = cum_adj
                 break
 
+        sign = -1.0 if convention == "subtract" else 1.0
         rows.append({
             "Date": d,
-            "Open": float(bar["open"]) - adj,
-            "High": float(bar["high"]) - adj,
-            "Low": float(bar["low"]) - adj,
-            "Close": float(bar["close"]) - adj,
+            "Open": float(bar["open"]) + sign * adj,
+            "High": float(bar["high"]) + sign * adj,
+            "Low": float(bar["low"]) + sign * adj,
+            "Close": float(bar["close"]) + sign * adj,
             "Volume": int(bar["volume"]),
             "contract": sym,
             "adjustment": round(adj, 6),
@@ -343,6 +385,7 @@ class ContinuousResult:
     roll_log: pd.DataFrame    # Roll events
     n_contracts: int = 0
     n_rolls: int = 0
+    convention: str = "subtract"
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +396,7 @@ def build_continuous(
     root: str,
     data_dir: Path,
     consecutive_days: int = ROLL_CONSECUTIVE_DAYS,
+    convention: AdjustmentConvention = "subtract",
 ) -> ContinuousResult:
     """Build a continuous back-adjusted series for one root symbol.
 
@@ -364,6 +408,8 @@ def build_continuous(
         Directory containing per-contract ``*.csv.zst`` files.
     consecutive_days : int
         Consecutive volume-crossover days to trigger a roll.
+    convention : {"subtract", "add"}
+        Adjustment convention (see ``apply_panama_adjustment``).
 
     Returns
     -------
@@ -382,25 +428,15 @@ def build_continuous(
                           "from_close", "to_close", "adjustment",
                           "cumulative_adjustment"]
             ),
+            convention=convention,
         )
 
     contract_order = parse_contracts(list(contracts.keys()))
 
     rolls, active_series = detect_rolls(contracts, contract_order, consecutive_days)
-    continuous = apply_panama_adjustment(contracts, active_series, rolls)
+    continuous = apply_panama_adjustment(contracts, active_series, rolls, convention)
 
-    roll_log = pd.DataFrame([
-        {
-            "date": r.date,
-            "from_contract": r.from_contract,
-            "to_contract": r.to_contract,
-            "from_close": r.from_close,
-            "to_close": r.to_close,
-            "adjustment": r.adjustment,
-            "cumulative_adjustment": r.cumulative_adjustment,
-        }
-        for r in rolls
-    ])
+    roll_log = _build_roll_log(rolls, len(contracts))
 
     return ContinuousResult(
         root=root,
@@ -408,7 +444,39 @@ def build_continuous(
         roll_log=roll_log,
         n_contracts=len(contracts),
         n_rolls=len(rolls),
+        convention=convention,
     )
+
+
+def _build_roll_log(
+    rolls: List[RollEvent],
+    n_contracts: int,
+) -> pd.DataFrame:
+    """Build a roll diagnostics DataFrame from roll events.
+
+    Includes per-roll: date, from/to contract, from/to close, adjustment,
+    cumulative_adjustment, and active_contract_count (contracts remaining
+    in the chain after the roll).
+    """
+    if not rolls:
+        return pd.DataFrame(
+            columns=["date", "from_contract", "to_contract",
+                      "from_close", "to_close", "adjustment",
+                      "cumulative_adjustment", "active_contract_count"]
+        )
+    rows = []
+    for i, r in enumerate(rolls):
+        rows.append({
+            "date": r.date,
+            "from_contract": r.from_contract,
+            "to_contract": r.to_contract,
+            "from_close": r.from_close,
+            "to_close": r.to_close,
+            "adjustment": r.adjustment,
+            "cumulative_adjustment": r.cumulative_adjustment,
+            "active_contract_count": n_contracts - (i + 1),
+        })
+    return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +487,7 @@ def build_all(
     symbols: List[str],
     base_dir: Path,
     out_dir: Path,
+    convention: AdjustmentConvention = "subtract",
 ) -> Dict[str, ContinuousResult]:
     """Build continuous series for multiple symbols and save outputs.
 
@@ -430,6 +499,8 @@ def build_all(
         Parent directory containing ``{symbol}/`` subdirectories.
     out_dir : Path
         Output directory for continuous CSVs and roll log.
+    convention : {"subtract", "add"}
+        Adjustment convention (see ``apply_panama_adjustment``).
 
     Returns
     -------
@@ -443,7 +514,7 @@ def build_all(
 
     for sym in symbols:
         sym_dir = Path(base_dir) / sym
-        result = build_continuous(sym, sym_dir)
+        result = build_continuous(sym, sym_dir, convention=convention)
         results[sym] = result
 
         # Save continuous CSV.
@@ -463,8 +534,156 @@ def build_all(
         combined_rl = pd.DataFrame(
             columns=["root", "date", "from_contract", "to_contract",
                       "from_close", "to_close", "adjustment",
-                      "cumulative_adjustment"]
+                      "cumulative_adjustment", "active_contract_count"]
         )
     combined_rl.to_csv(out_dir / "roll_log.csv", index=False)
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Parity calibration helper
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ConventionScore:
+    """Comparison score for one adjustment convention against a reference."""
+
+    convention: str
+    mean_close_diff: float
+    max_close_diff: float
+    mean_ema10_diff: float
+    max_ema10_diff: float
+    overlap_bars: int
+
+
+@dataclass
+class CalibrationResult:
+    """Result of calibrating adjustment convention for one symbol."""
+
+    symbol: str
+    recommended: str  # "subtract" or "add"
+    scores: Dict[str, ConventionScore]
+
+
+def calibrate_convention(
+    contracts: Dict[str, pd.DataFrame],
+    contract_order: List[ContractSpec],
+    reference_df: pd.DataFrame,
+    consecutive_days: int = ROLL_CONSECUTIVE_DAYS,
+    ema_period: int = 10,
+) -> CalibrationResult:
+    """Build both conventions and compare against a reference series.
+
+    Parameters
+    ----------
+    contracts : dict
+        ``{symbol: df}`` raw contract data (same format as ``load_contract_data``).
+    contract_order : list of ContractSpec
+        Sorted contract chain.
+    reference_df : pd.DataFrame
+        Reference OHLCV with ``Date`` and ``Close`` columns (e.g. TradeStation).
+    consecutive_days : int
+        Roll trigger threshold.
+    ema_period : int
+        EMA period for comparison metric.
+
+    Returns
+    -------
+    CalibrationResult with per-convention scores and recommendation.
+    """
+    rolls, active_series = detect_rolls(contracts, contract_order, consecutive_days)
+
+    # Parse reference dates.
+    ref = reference_df.copy()
+    ref["Date"] = pd.to_datetime(ref["Date"])
+    ref = ref.sort_values("Date").drop_duplicates(subset=["Date"]).reset_index(drop=True)
+    ref_dates = set(ref["Date"].dt.date)
+
+    scores: Dict[str, ConventionScore] = {}
+
+    for conv in ADJUSTMENT_CONVENTIONS:
+        # Re-detect cumulative adjustments for fresh RollEvent state.
+        rolls_copy = []
+        for r in rolls:
+            rolls_copy.append(RollEvent(
+                date=r.date,
+                from_contract=r.from_contract,
+                to_contract=r.to_contract,
+                from_close=r.from_close,
+                to_close=r.to_close,
+                adjustment=r.adjustment,
+            ))
+
+        continuous = apply_panama_adjustment(
+            contracts, active_series, rolls_copy, convention=conv,
+        )
+
+        if continuous.empty:
+            scores[conv] = ConventionScore(
+                convention=conv,
+                mean_close_diff=np.inf,
+                max_close_diff=np.inf,
+                mean_ema10_diff=np.inf,
+                max_ema10_diff=np.inf,
+                overlap_bars=0,
+            )
+            continue
+
+        # Align on overlapping dates.
+        cont_dates = set(continuous["Date"].dt.date)
+        common = sorted(cont_dates & ref_dates)
+        if not common:
+            scores[conv] = ConventionScore(
+                convention=conv,
+                mean_close_diff=np.inf,
+                max_close_diff=np.inf,
+                mean_ema10_diff=np.inf,
+                max_ema10_diff=np.inf,
+                overlap_bars=0,
+            )
+            continue
+
+        # Merge on date.
+        cont_keyed = continuous.copy()
+        cont_keyed["_date"] = cont_keyed["Date"].dt.date
+        ref_keyed = ref.copy()
+        ref_keyed["_date"] = ref_keyed["Date"].dt.date
+
+        merged = pd.merge(
+            cont_keyed[["_date", "Close"]].rename(columns={"Close": "close_db"}),
+            ref_keyed[["_date", "Close"]].rename(columns={"Close": "close_ref"}),
+            on="_date",
+        ).sort_values("_date").reset_index(drop=True)
+
+        close_diff = (merged["close_db"] - merged["close_ref"]).abs()
+
+        # EMA comparison.
+        if len(merged) >= ema_period:
+            ema_db = merged["close_db"].ewm(span=ema_period, adjust=False).mean()
+            ema_ref = merged["close_ref"].ewm(span=ema_period, adjust=False).mean()
+            ema_diff = (ema_db - ema_ref).abs().iloc[ema_period - 1:]
+            mean_ema = float(ema_diff.mean())
+            max_ema = float(ema_diff.max())
+        else:
+            mean_ema = float(close_diff.mean())
+            max_ema = float(close_diff.max())
+
+        scores[conv] = ConventionScore(
+            convention=conv,
+            mean_close_diff=round(float(close_diff.mean()), 6),
+            max_close_diff=round(float(close_diff.max()), 6),
+            mean_ema10_diff=round(mean_ema, 6),
+            max_ema10_diff=round(max_ema, 6),
+            overlap_bars=len(merged),
+        )
+
+    # Recommend the convention with lower mean EMA diff.
+    best = min(scores.values(), key=lambda s: s.mean_ema10_diff)
+
+    symbol = contract_order[0].root if contract_order else "?"
+    return CalibrationResult(
+        symbol=symbol,
+        recommended=best.convention,
+        scores=scores,
+    )
