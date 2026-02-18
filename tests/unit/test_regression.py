@@ -183,6 +183,13 @@ class TestPrepareFeatures:
         X_cand, y, _, _, _ = prepare_features(df, cfg)
         assert X_cand.isna().sum().sum() == 0
 
+    def test_all_columns_float64(self):
+        df = _make_dataset(n=60)
+        cfg = load_pre_reg(PRE_REG_PATH)
+        X_cand, _, _, _, _ = prepare_features(df, cfg)
+        for col in X_cand.columns:
+            assert X_cand[col].dtype == np.float64, f"{col} is {X_cand[col].dtype}"
+
     def test_missing_feature_raises(self):
         df = _make_dataset(n=20)
         df = df.drop(columns=["BarsOfAir"])

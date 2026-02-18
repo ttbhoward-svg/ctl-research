@@ -123,7 +123,8 @@ def prepare_features(
     X_cand = df[cfg.feature_names].copy()
 
     # Fill NaN with 0.0 (neutral imputation — see Task10_assumptions.md #1-2).
-    X_cand = X_cand.fillna(0.0).astype(float)
+    # Cast to float first to avoid pandas FutureWarning on silent downcasting.
+    X_cand = X_cand.astype(float).fillna(0.0)
 
     # Target.
     y = df[cfg.target].values.astype(float)
