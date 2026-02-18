@@ -9,3 +9,4 @@ yfinance
 pyarrow
 exchange-calendars
 matplotlib
+zstandard
