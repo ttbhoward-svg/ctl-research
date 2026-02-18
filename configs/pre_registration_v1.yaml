@@ -1,0 +1,254 @@
+# Phase 1a Pre-Registration — Machine-Readable Artifact (v1)
+# Locked: 2026-02-17.  No modifications after first model run.
+# Matches docs/governance/pre_registration_v1.md exactly.
+
+version: "v1"
+date_locked: "2026-02-17"
+strategy: "B1"
+code_commit_at_lock: "2e0479e494a0e8775ef1c50c85d8d16c21cf8c10"
+
+# ---------------------------------------------------------------------------
+# Features (frozen cap: 9 candidates + 1 control)
+# ---------------------------------------------------------------------------
+features:
+  candidates:
+    - name: BarsOfAir
+      type: continuous
+      category: technical
+      expected_sign: positive
+    - name: Slope_20
+      type: continuous
+      category: technical
+      expected_sign: positive
+    - name: CleanPullback
+      type: boolean
+      category: technical
+      expected_sign: positive
+    - name: WR_Divergence
+      type: boolean
+      category: technical
+      expected_sign: positive
+    - name: WeeklyTrendAligned
+      type: boolean
+      category: mtfa
+      expected_sign: positive
+    - name: MonthlyTrendAligned
+      type: boolean
+      category: mtfa
+      expected_sign: positive
+    - name: COT_20D_Delta
+      type: continuous
+      category: external
+      expected_sign: positive
+      applicability: futures_only
+    - name: COT_ZScore_1Y
+      type: continuous
+      category: external
+      expected_sign: positive
+      applicability: futures_only
+    - name: VIX_Regime
+      type: boolean
+      category: external
+      expected_sign: positive
+      applicability: all_symbols
+  control:
+    - name: AssetCluster
+      type: categorical
+      n_clusters: 11
+      role: fixed_effect
+
+# ---------------------------------------------------------------------------
+# Model specification
+# ---------------------------------------------------------------------------
+model:
+  type: elastic_net
+  implementation: ElasticNetCV
+  target: TheoreticalR
+  standardize: true
+  standardizer: StandardScaler
+  cv_type: PurgedTimeSeriesSplit
+  cv_folds: 5
+  purge_gap_days: 30
+  random_seed: 42
+  fallbacks:
+    - logistic_elastic_net_on_win_loss
+    - elastic_net_on_mfe_r
+    - univariate_per_feature
+
+# ---------------------------------------------------------------------------
+# Data boundaries
+# ---------------------------------------------------------------------------
+boundaries:
+  is_start: "2018-01-01"
+  is_end: "2024-12-31"
+  oos_start: "2025-01-01"
+
+universe:
+  total_symbols: 29
+  tradable: 28
+  research_only: 1
+  active_clusters: 8
+  reserved_clusters: 3
+
+# ---------------------------------------------------------------------------
+# B1 signal parameters (defaults + pre-registered ranges)
+# ---------------------------------------------------------------------------
+b1_parameters:
+  slope_threshold:
+    default: 8
+    range: [4, 14]
+  slope_lookback:
+    default: 20
+    range: [15, 30]
+  min_bars_of_air:
+    default: 6
+    range: [3, 10]
+  max_bars_of_air_lookback:
+    default: 50
+    range: [20, 100]
+  entry_grace_bars:
+    default: 3
+    range: [1, 5]
+  breakdown_buffer_atr:
+    default: 0.5
+    range: [0.3, 0.7]
+  swing_lookback_daily:
+    default: 20
+    range: [15, 25]
+  swing_lookback_weekly:
+    default: 12
+    range: [8, 16]
+  stop_mgmt_mode:
+    default: 1
+    range: [1, 1]
+  gap_scan_window:
+    default: 100
+    range: [50, 200]
+  atr_period:
+    default: 14
+    fixed: true
+  williams_r_period:
+    default: 10
+    fixed: true
+  ema_period:
+    default: 10
+    fixed: true
+
+parameter_stability:
+  ema_test_values: [9, 10, 11]
+  requirement: "edge survives at all three values"
+
+# ---------------------------------------------------------------------------
+# Gate 1 pass/fail criteria (all 9 must pass)
+# ---------------------------------------------------------------------------
+gate1_criteria:
+  - id: 1
+    name: oos_trade_count
+    threshold: 30
+    operator: ">="
+  - id: 2
+    name: oos_tercile_spread
+    threshold: 1.0
+    unit: "R"
+    operator: ">="
+  - id: 3
+    name: score_monotonicity
+    requirement: "top > mid > bottom on avg R"
+  - id: 4
+    name: feature_cap
+    requirement: "9 candidates + 1 cluster control, frozen"
+  - id: 5
+    name: model_card
+    requirement: "complete and reproducible (v2 template)"
+  - id: 6
+    name: negative_controls
+    requirement: "all three passed"
+  - id: 7
+    name: entry_degradation
+    tolerances:
+      total_r_pct: 25
+      win_rate_pp: 5
+      mar_pct: 30
+  - id: 8
+    name: slippage_stress
+    requirement: "profitable at 2 ticks per side"
+  - id: 9
+    name: quintile_calibration
+    requirement: "directionally calibrated OOS"
+
+# ---------------------------------------------------------------------------
+# Kill / pause criteria
+# ---------------------------------------------------------------------------
+kill_criteria:
+  - condition: "OOS top-tercile avg R < 0.5R"
+    action: REJECT
+  - condition: "OOS score-R correlation < 0.05"
+    action: REJECT
+  - condition: "monotonicity failure (mid > top on OOS)"
+    action: PAUSE
+  - condition: "rolling score drift (20-trade corr < 0) for 20 consecutive trades"
+    action: PAUSE
+  - condition: "< 30 OOS trades after 12 months"
+    action: REJECT
+  - condition: "> 60% IS top-tercile from single cluster"
+    action: REJECT
+  - condition: "negative controls fail"
+    action: REJECT
+  - condition: "parameter sensitivity spike-shaped for >= 2 parameters"
+    action: REJECT
+  - condition: "slippage edge evaporates at 2 ticks"
+    action: REJECT
+  - condition: "entry degradation total R collapses > 50%"
+    action: REJECT
+  - condition: "2+ feature coefficients flip sign between fits"
+    action: PAUSE
+
+# ---------------------------------------------------------------------------
+# Negative controls
+# ---------------------------------------------------------------------------
+negative_controls:
+  - name: randomized_labels
+    method: "shuffle TheoreticalR, refit, expect near-zero R² and no spread"
+  - name: lag_shift
+    method: "shift features forward 1 bar, expect degradation or failure"
+  - name: placebo_feature
+    method: "add random noise column, expect ~zero weight"
+
+# ---------------------------------------------------------------------------
+# Minimum trade count rules
+# ---------------------------------------------------------------------------
+trade_count_rules:
+  exploratory_only_below: 80
+  per_cluster_minimum: 15
+  below_threshold_action: "informational only, cannot drive live sizing"
+
+# ---------------------------------------------------------------------------
+# Reproducibility chain fields (required per model run)
+# ---------------------------------------------------------------------------
+reproducibility_chain:
+  - field: dataset_sha256
+    source: "dataset_assembler.compute_manifest()"
+  - field: code_commit_hash
+    source: "git rev-parse HEAD"
+  - field: pre_registration_version
+    source: "this file (v1)"
+  - field: model_config_hash
+    source: "SHA-256 of configs/model.yaml"
+  - field: phase_config_hash
+    source: "SHA-256 of configs/phase1a.yaml"
+  - field: pre_reg_config_hash
+    source: "SHA-256 of configs/pre_registration_v1.yaml"
+  - field: is_start
+    value: "2018-01-01"
+  - field: is_end
+    value: "2024-12-31"
+  - field: oos_start
+    value: "2025-01-01"
+  - field: random_seed
+    value: 42
+  - field: run_timestamp
+    format: "ISO-8601 UTC"
+  - field: python_version
+    source: "sys.version"
+  - field: sklearn_version
+    source: "sklearn.__version__"
