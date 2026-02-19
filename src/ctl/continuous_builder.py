@@ -19,11 +19,12 @@ Usage
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -59,6 +60,20 @@ ADJUSTMENT_CONVENTIONS = ("subtract", "add")
 
 #: Type alias for adjustment convention.
 AdjustmentConvention = Literal["subtract", "add"]
+
+#: Build mode labels for dual-mode operation.
+#: "parity_mode"   — TradeStation-bridge calibration (convention="add").
+#: "canonical_mode" — production (convention="subtract").
+BUILD_MODES = ("parity_mode", "canonical_mode")
+
+#: Type alias for build mode.
+BuildMode = Literal["parity_mode", "canonical_mode"]
+
+#: Default mode-to-convention mapping.
+MODE_CONVENTION: Dict[str, AdjustmentConvention] = {
+    "parity_mode": "add",
+    "canonical_mode": "subtract",
+}
 
 #: Contract code regex: root (1-3 uppercase letters) + month (1 letter) + year (1 digit).
 CONTRACT_RE = re.compile(r"^([A-Z]{1,3})([FGHJKMNQUVXZ])(\d)$")
@@ -386,6 +401,7 @@ class ContinuousResult:
     n_contracts: int = 0
     n_rolls: int = 0
     convention: str = "subtract"
+    build_mode: str = "canonical_mode"
 
 
 # ---------------------------------------------------------------------------
@@ -687,3 +703,111 @@ def calibrate_convention(
         recommended=best.convention,
         scores=scores,
     )
+
+
+# ---------------------------------------------------------------------------
+# Roll manifest JSON export
+# ---------------------------------------------------------------------------
+
+def export_roll_manifest(
+    result: ContinuousResult,
+    out_path: Path,
+    session_template: str = "electronic",
+    close_type: str = "settlement",
+) -> Path:
+    """Export a per-symbol roll manifest JSON from a ContinuousResult.
+
+    The manifest captures every roll event with full metadata suitable for
+    downstream parity diagnostics and roll reconciliation.
+
+    Parameters
+    ----------
+    result : ContinuousResult
+        Output from ``build_continuous``.
+    out_path : Path
+        Destination JSON file path.
+    session_template : str
+        Session template label (e.g. ``"electronic"``).
+    close_type : str
+        Close price type (e.g. ``"settlement"``).
+
+    Returns
+    -------
+    Path to the written JSON file.
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    entries: List[dict] = []
+    rl = result.roll_log
+    if not rl.empty:
+        for _, row in rl.iterrows():
+            gap = float(row["to_close"]) - float(row["from_close"])
+            entries.append({
+                "roll_date": str(row["date"]),
+                "from_contract": str(row["from_contract"]),
+                "to_contract": str(row["to_contract"]),
+                "from_close": round(float(row["from_close"]), 6),
+                "to_close": round(float(row["to_close"]), 6),
+                "gap": round(gap, 6),
+                "cumulative_adj": round(float(row["cumulative_adjustment"]), 6),
+                "trigger_reason": "volume_crossover",
+                "confirmation_days": ROLL_CONSECUTIVE_DAYS,
+                "convention": result.convention,
+                "session_template": session_template,
+                "close_type": close_type,
+            })
+
+    manifest = {
+        "symbol": result.root,
+        "build_mode": result.build_mode,
+        "convention": result.convention,
+        "n_rolls": result.n_rolls,
+        "n_contracts": result.n_contracts,
+        "rolls": entries,
+    }
+
+    with open(out_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# Dual-mode builder
+# ---------------------------------------------------------------------------
+
+def build_continuous_with_mode(
+    root: str,
+    data_dir: Path,
+    mode: BuildMode = "canonical_mode",
+    consecutive_days: int = ROLL_CONSECUTIVE_DAYS,
+    convention_override: Optional[AdjustmentConvention] = None,
+) -> ContinuousResult:
+    """Build continuous series in a named mode.
+
+    Parameters
+    ----------
+    root : str
+        Root symbol (e.g. ``"ES"``).
+    data_dir : Path
+        Directory containing per-contract ``*.csv.zst`` files.
+    mode : {"parity_mode", "canonical_mode"}
+        Build mode label. ``parity_mode`` defaults to ``convention="add"``;
+        ``canonical_mode`` defaults to ``convention="subtract"``.
+    consecutive_days : int
+        Consecutive volume-crossover days to trigger a roll.
+    convention_override : str, optional
+        Explicitly override the convention (ignoring mode default).
+
+    Returns
+    -------
+    ContinuousResult with ``build_mode`` set.
+    """
+    if mode not in BUILD_MODES:
+        raise ValueError(f"Unknown build mode '{mode}'; expected one of {BUILD_MODES}")
+
+    convention = convention_override or MODE_CONVENTION[mode]
+    result = build_continuous(root, data_dir, consecutive_days, convention)
+    result.build_mode = mode
+    return result
