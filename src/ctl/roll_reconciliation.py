@@ -135,6 +135,15 @@ class RollComparisonResult:
     n_matched: int = 0
     n_watch: int = 0
     n_fail: int = 0
+    day_delta_histogram: Dict[int, int] = field(default_factory=dict)
+    unmatched_canonical: int = 0
+    unmatched_ts: int = 0
+    cumulative_signed_day_shift: int = 0
+
+    @property
+    def n_paired(self) -> int:
+        """Number of paired events (PASS + WATCH)."""
+        return self.n_matched + self.n_watch
 
     @property
     def status(self) -> Status:
@@ -150,6 +159,11 @@ class RollComparisonResult:
             "n_matched": self.n_matched,
             "n_watch": self.n_watch,
             "n_fail": self.n_fail,
+            "n_paired": self.n_paired,
+            "day_delta_histogram": self.day_delta_histogram,
+            "unmatched_canonical": self.unmatched_canonical,
+            "unmatched_ts": self.unmatched_ts,
+            "cumulative_signed_day_shift": self.cumulative_signed_day_shift,
             "matches": [m.to_dict() for m in self.matches],
         }
 
@@ -405,19 +419,125 @@ def derive_ts_roll_events_from_spread(
 
 
 # ---------------------------------------------------------------------------
-# Schedule comparison
+# Schedule comparison — alignment config
 # ---------------------------------------------------------------------------
+
+#: Cost weight for day-delta in monotonic alignment.
+ALIGN_W_DAY: float = 1.0
+
+#: Cost weight for gap-delta (in ticks) in monotonic alignment.
+#: Kept small so gap differences act as a tiebreaker, not a veto.
+ALIGN_W_GAP: float = 0.01
+
+#: Penalty for leaving a roll event unmatched.
+ALIGN_UNMATCHED_PENALTY: float = 50.0
+
+#: Default tick size for gap normalisation (overridden per-symbol at call site).
+ALIGN_DEFAULT_TICK_SIZE: float = 0.01
+
+
+# ---------------------------------------------------------------------------
+# Schedule comparison — monotonic DP alignment
+# ---------------------------------------------------------------------------
+
+def _monotonic_align(
+    can_dates: List,
+    can_gaps: List[float],
+    ts_dates: List,
+    ts_gaps: List[float],
+    max_day_delta: int,
+    w_day: float,
+    w_gap: float,
+    unmatched_penalty: float,
+    tick_size: float,
+) -> List:
+    """DP-based monotonic sequence alignment.
+
+    Returns a list of ``(action, can_idx_or_None, ts_idx_or_None)`` tuples
+    where *action* is ``"match"``, ``"skip_can"``, or ``"skip_ts"``.
+    """
+    n = len(can_dates)
+    m = len(ts_dates)
+    INF = float("inf")
+
+    # dp[i][j] = min cost to align can[0..i-1] with ts[0..j-1].
+    dp = [[INF] * (m + 1) for _ in range(n + 1)]
+    bt = [[None] * (m + 1) for _ in range(n + 1)]
+    dp[0][0] = 0.0
+
+    for i in range(1, n + 1):
+        dp[i][0] = dp[i - 1][0] + unmatched_penalty
+        bt[i][0] = "skip_can"
+
+    for j in range(1, m + 1):
+        dp[0][j] = dp[0][j - 1] + unmatched_penalty
+        bt[0][j] = "skip_ts"
+
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            # Option 1: skip canonical[i-1].
+            cost_skip_can = dp[i - 1][j] + unmatched_penalty
+
+            # Option 2: skip ts[j-1].
+            cost_skip_ts = dp[i][j - 1] + unmatched_penalty
+
+            # Option 3: match canonical[i-1] with ts[j-1].
+            day_delta = abs((can_dates[i - 1] - ts_dates[j - 1]).days)
+            if day_delta <= max_day_delta:
+                gap_delta_ticks = (
+                    abs(can_gaps[i - 1] - ts_gaps[j - 1]) / tick_size
+                    if tick_size > 0
+                    else 0.0
+                )
+                cost_match = dp[i - 1][j - 1] + w_day * day_delta + w_gap * gap_delta_ticks
+            else:
+                cost_match = INF
+
+            best = min(cost_skip_can, cost_skip_ts, cost_match)
+            dp[i][j] = best
+            if best == cost_match and cost_match < INF:
+                bt[i][j] = "match"
+            elif best == cost_skip_can:
+                bt[i][j] = "skip_can"
+            else:
+                bt[i][j] = "skip_ts"
+
+    # Backtrack.
+    alignment = []
+    i, j = n, m
+    while i > 0 or j > 0:
+        action = bt[i][j]
+        if action == "match" and i > 0 and j > 0:
+            alignment.append(("match", i - 1, j - 1))
+            i -= 1
+            j -= 1
+        elif action == "skip_can" and i > 0:
+            alignment.append(("skip_can", i - 1, None))
+            i -= 1
+        elif j > 0:
+            alignment.append(("skip_ts", None, j - 1))
+            j -= 1
+        else:
+            break  # safety
+
+    alignment.reverse()
+    return alignment
+
 
 def compare_roll_schedules(
     canonical_rolls: List[RollManifestEntry],
     ts_rolls: List[TSRollEvent],
     max_day_delta: int = 2,
+    tick_size: float = ALIGN_DEFAULT_TICK_SIZE,
+    w_day: float = ALIGN_W_DAY,
+    w_gap: float = ALIGN_W_GAP,
+    unmatched_penalty: float = ALIGN_UNMATCHED_PENALTY,
 ) -> RollComparisonResult:
     """Compare canonical (Databento) roll schedule against TS-inferred rolls.
 
-    Each canonical roll is matched to the closest TS roll within
-    ``max_day_delta`` trading days. Unmatched rolls in either set are
-    marked FAIL.
+    Uses monotonic DP alignment to find the minimum-cost order-preserving
+    pairing.  This prevents systematic day-shifts from cascading into
+    mass FAILs as the old greedy matcher did.
 
     Parameters
     ----------
@@ -425,49 +545,60 @@ def compare_roll_schedules(
     ts_rolls : list of TSRollEvent
     max_day_delta : int
         Maximum calendar-day difference to consider a match.
+    tick_size : float
+        Tick size for normalising gap differences.
+    w_day : float
+        Cost weight for ``abs(day_delta)``.
+    w_gap : float
+        Cost weight for ``abs(gap_delta_ticks)``.
+    unmatched_penalty : float
+        Penalty for leaving a roll event unmatched.
 
     Returns
     -------
     RollComparisonResult
     """
-    # Parse dates.
+    if not canonical_rolls and not ts_rolls:
+        return RollComparisonResult()
+
+    # Parse dates and gaps.
     can_dates = []
+    can_gaps: List[float] = []
     for r in canonical_rolls:
         d = pd.Timestamp(r.roll_date).date() if isinstance(r.roll_date, str) else r.roll_date
         can_dates.append(d)
+        can_gaps.append(r.gap)
 
     ts_dates = []
+    ts_gaps: List[float] = []
     for r in ts_rolls:
         d = pd.Timestamp(r.date).date() if isinstance(r.date, str) else r.date
         ts_dates.append(d)
+        ts_gaps.append(r.gap)
 
-    # Greedy nearest-match: for each canonical roll, find closest TS roll.
-    ts_used = set()
+    # Run DP alignment.
+    alignment = _monotonic_align(
+        can_dates, can_gaps, ts_dates, ts_gaps,
+        max_day_delta, w_day, w_gap, unmatched_penalty, tick_size,
+    )
+
+    # Convert alignment to RollMatch list.
     matches: List[RollMatch] = []
+    signed_deltas: List[int] = []
 
-    for i, can_r in enumerate(canonical_rolls):
-        can_d = can_dates[i]
-        best_j: Optional[int] = None
-        best_delta: Optional[int] = None
-
-        for j, ts_d in enumerate(ts_dates):
-            if j in ts_used:
-                continue
-            delta = abs((can_d - ts_d).days)
-            if delta <= max_day_delta:
-                if best_delta is None or delta < best_delta:
-                    best_j = j
-                    best_delta = delta
-
-        if best_j is not None:
-            ts_used.add(best_j)
-            ts_r = ts_rolls[best_j]
-            gap_diff = abs(can_r.gap - ts_r.gap) if ts_r.gap is not None else None
-            status: Status = "PASS" if best_delta == 0 else "WATCH"
+    for action, ci, ti in alignment:
+        if action == "match":
+            can_r = canonical_rolls[ci]
+            ts_r = ts_rolls[ti]
+            day_delta = abs((can_dates[ci] - ts_dates[ti]).days)
+            signed_delta = (ts_dates[ti] - can_dates[ci]).days
+            signed_deltas.append(signed_delta)
+            gap_diff = abs(can_r.gap - ts_r.gap)
+            status: Status = "PASS" if day_delta == 0 else "WATCH"
             matches.append(RollMatch(
-                canonical_date=str(can_d),
-                ts_date=str(ts_dates[best_j]),
-                day_delta=best_delta,
+                canonical_date=str(can_dates[ci]),
+                ts_date=str(ts_dates[ti]),
+                day_delta=day_delta,
                 status=status,
                 canonical_gap=can_r.gap,
                 ts_gap=ts_r.gap,
@@ -475,9 +606,10 @@ def compare_roll_schedules(
                 from_contract=can_r.from_contract,
                 to_contract=can_r.to_contract,
             ))
-        else:
+        elif action == "skip_can":
+            can_r = canonical_rolls[ci]
             matches.append(RollMatch(
-                canonical_date=str(can_d),
+                canonical_date=str(can_dates[ci]),
                 ts_date=None,
                 day_delta=None,
                 status="FAIL",
@@ -487,13 +619,11 @@ def compare_roll_schedules(
                 from_contract=can_r.from_contract,
                 to_contract=can_r.to_contract,
             ))
-
-    # Unmatched TS rolls.
-    for j, ts_r in enumerate(ts_rolls):
-        if j not in ts_used:
+        else:  # skip_ts
+            ts_r = ts_rolls[ti]
             matches.append(RollMatch(
                 canonical_date=None,
-                ts_date=str(ts_dates[j]),
+                ts_date=str(ts_dates[ti]),
                 day_delta=None,
                 status="FAIL",
                 canonical_gap=None,
@@ -505,6 +635,20 @@ def compare_roll_schedules(
     n_watch = sum(1 for m in matches if m.status == "WATCH")
     n_fail = sum(1 for m in matches if m.status == "FAIL")
 
+    # Richer diagnostics.
+    day_delta_hist: Dict[int, int] = {}
+    for m in matches:
+        if m.day_delta is not None:
+            day_delta_hist[m.day_delta] = day_delta_hist.get(m.day_delta, 0) + 1
+
+    unmatched_can = sum(
+        1 for m in matches if m.status == "FAIL" and m.canonical_date is not None and m.ts_date is None
+    )
+    unmatched_ts = sum(
+        1 for m in matches if m.status == "FAIL" and m.ts_date is not None and m.canonical_date is None
+    )
+    cumulative_signed = sum(signed_deltas)
+
     return RollComparisonResult(
         matches=matches,
         n_canonical=len(canonical_rolls),
@@ -512,6 +656,10 @@ def compare_roll_schedules(
         n_matched=n_matched,
         n_watch=n_watch,
         n_fail=n_fail,
+        day_delta_histogram=day_delta_hist,
+        unmatched_canonical=unmatched_can,
+        unmatched_ts=unmatched_ts,
+        cumulative_signed_day_shift=cumulative_signed,
     )
 
 

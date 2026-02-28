@@ -15,6 +15,8 @@ from ctl.cutover_diagnostics import (
     L2Result,
     L3Result,
     L4Result,
+    POLICY_MAX_FAIL_FRAC,
+    POLICY_MAX_UNMATCHED_FRAC,
     run_diagnostics,
     run_l2,
     run_l3,
@@ -552,3 +554,113 @@ class TestExportRollManifest:
         with open(path) as f:
             data = json.load(f)
         assert data["rolls"][0]["gap"] == pytest.approx(25.0)
+
+
+# ===========================================================================
+# Policy status tests (Task H.2)
+# ===========================================================================
+
+class TestPolicyStatus:
+    """Test dual strict_status / policy_status semantics."""
+
+    def _make_diagnostic(
+        self,
+        n_canonical: int = 10,
+        n_ts: int = 10,
+        n_matched: int = 10,
+        n_watch: int = 0,
+        n_fail: int = 0,
+        unmatched_canonical: int = 0,
+        unmatched_ts: int = 0,
+    ) -> DiagnosticResult:
+        """Build a DiagnosticResult with a hand-crafted RollComparisonResult."""
+        comp = RollComparisonResult(
+            matches=[
+                RollMatch(status="PASS") for _ in range(n_matched)
+            ] + [
+                RollMatch(status="WATCH") for _ in range(n_watch)
+            ] + [
+                RollMatch(status="FAIL") for _ in range(n_fail)
+            ],
+            n_canonical=n_canonical,
+            n_ts=n_ts,
+            n_matched=n_matched,
+            n_watch=n_watch,
+            n_fail=n_fail,
+            unmatched_canonical=unmatched_canonical,
+            unmatched_ts=unmatched_ts,
+        )
+        l2 = L2Result(symbol="TEST", comparison=comp)
+        l3 = L3Result(symbol="TEST")
+        l4 = L4Result(symbol="TEST")
+        return DiagnosticResult(symbol="TEST", l2=l2, l3=l3, l4=l4)
+
+    def test_all_pass_gives_pass(self):
+        """All PASS matches → strict=PASS, policy=PASS."""
+        d = self._make_diagnostic(n_canonical=5, n_ts=5, n_matched=5)
+        assert d.strict_status == "PASS"
+        assert d.policy_status == "PASS"
+
+    def test_all_watch_low_unmatched_gives_watch(self):
+        """All WATCH with low unmatched → strict=WATCH, policy=WATCH."""
+        d = self._make_diagnostic(
+            n_canonical=10, n_ts=10,
+            n_matched=0, n_watch=10, n_fail=0,
+            unmatched_canonical=0, unmatched_ts=0,
+        )
+        assert d.strict_status == "WATCH"
+        assert d.policy_status == "WATCH"
+
+    def test_few_fails_gives_policy_watch(self):
+        """A few FAILs within threshold → policy=WATCH."""
+        # 10 canonical, 10 ts = total 20, 1 unmatched each side = 2/20 = 0.10
+        # 1 FAIL out of 9 matches = 0.11
+        d = self._make_diagnostic(
+            n_canonical=10, n_ts=10,
+            n_matched=0, n_watch=8, n_fail=1,
+            unmatched_canonical=1, unmatched_ts=1,
+        )
+        assert d.strict_status == "FAIL"
+        assert d.policy_status == "WATCH"
+
+    def test_many_fails_gives_policy_fail(self):
+        """Many FAILs above threshold → policy=FAIL."""
+        d = self._make_diagnostic(
+            n_canonical=10, n_ts=10,
+            n_matched=0, n_watch=3, n_fail=5,
+            unmatched_canonical=2, unmatched_ts=2,
+        )
+        assert d.strict_status == "FAIL"
+        assert d.policy_status == "FAIL"
+
+    def test_high_unmatched_gives_policy_fail(self):
+        """High unmatched fraction → policy=FAIL even if few FAILs."""
+        d = self._make_diagnostic(
+            n_canonical=10, n_ts=10,
+            n_matched=0, n_watch=5, n_fail=0,
+            unmatched_canonical=5, unmatched_ts=5,
+        )
+        # unmatched_frac = 10/20 = 0.50 > 0.10 → FAIL
+        assert d.policy_status == "FAIL"
+
+    def test_no_canonical_gives_pass(self):
+        """No canonical rolls → policy=PASS."""
+        d = self._make_diagnostic(n_canonical=0, n_ts=0, n_matched=0)
+        assert d.policy_status == "PASS"
+
+    def test_to_dict_includes_both_statuses(self):
+        """to_dict should include strict_status and policy_status."""
+        d = self._make_diagnostic(n_canonical=5, n_ts=5, n_matched=5)
+        out = d.to_dict()
+        assert "strict_status" in out
+        assert "policy_status" in out
+        assert out["strict_status"] == "PASS"
+        assert out["policy_status"] == "PASS"
+
+    def test_status_alias(self):
+        """status property should be an alias for strict_status."""
+        d = self._make_diagnostic(
+            n_canonical=5, n_ts=5,
+            n_matched=0, n_watch=5, n_fail=0,
+        )
+        assert d.status == d.strict_status

@@ -42,6 +42,16 @@ from ctl.roll_reconciliation import (
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Policy thresholds
+# ---------------------------------------------------------------------------
+
+#: Maximum fraction of unmatched rolls (either side) for policy PASS.
+POLICY_MAX_UNMATCHED_FRAC: float = 0.10
+
+#: Maximum fraction of FAIL matches for policy PASS.
+POLICY_MAX_FAIL_FRAC: float = 0.15
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -68,6 +78,11 @@ class L2Result:
             "n_matched": self.comparison.n_matched,
             "n_watch": self.comparison.n_watch,
             "n_fail": self.comparison.n_fail,
+            "n_paired": self.comparison.n_paired,
+            "unmatched_canonical": self.comparison.unmatched_canonical,
+            "unmatched_ts": self.comparison.unmatched_ts,
+            "day_delta_histogram": self.comparison.day_delta_histogram,
+            "cumulative_signed_day_shift": self.comparison.cumulative_signed_day_shift,
         }
 
 
@@ -123,13 +138,53 @@ class DiagnosticResult:
     l4: L4Result
 
     @property
-    def status(self) -> str:
+    def strict_status(self) -> str:
+        """Strict status: FAIL if any match is FAIL."""
         return _worst_status([self.l2.status])
+
+    # Keep ``status`` as alias for backwards compatibility.
+    @property
+    def status(self) -> str:
+        return self.strict_status
+
+    @property
+    def policy_status(self) -> str:
+        """Policy status: a watch-heavy result can PASS if failures are localised.
+
+        Rules:
+        - If strict_status is PASS → PASS.
+        - If there are no canonical rolls → PASS.
+        - Compute unmatched fraction and fail fraction.
+        - If both are below policy thresholds → WATCH (explainable).
+        - Otherwise → FAIL.
+        """
+        if self.strict_status == "PASS":
+            return "PASS"
+
+        comp = self.l2.comparison
+        if comp.n_canonical == 0:
+            return "PASS"
+
+        total = comp.n_canonical + comp.n_ts
+        if total == 0:
+            return "PASS"
+
+        unmatched_frac = (comp.unmatched_canonical + comp.unmatched_ts) / total
+        fail_frac = comp.n_fail / max(len(comp.matches), 1)
+
+        if (
+            unmatched_frac <= POLICY_MAX_UNMATCHED_FRAC
+            and fail_frac <= POLICY_MAX_FAIL_FRAC
+        ):
+            return "WATCH"
+
+        return "FAIL"
 
     def to_dict(self) -> dict:
         return {
             "symbol": self.symbol,
-            "overall_status": self.status,
+            "strict_status": self.strict_status,
+            "policy_status": self.policy_status,
             "l2": self.l2.to_dict(),
             "l3": self.l3.to_dict(),
             "l4": self.l4.to_dict(),
@@ -145,6 +200,7 @@ def run_l2(
     ts_rolls: List[TSRollEvent],
     symbol: str,
     max_day_delta: int = 2,
+    tick_size: float = 0.01,
 ) -> L2Result:
     """Run L2 roll schedule comparison diagnostic.
 
@@ -158,12 +214,16 @@ def run_l2(
         Symbol label for reporting.
     max_day_delta : int
         Maximum calendar-day tolerance for matching.
+    tick_size : float
+        Instrument tick size for alignment cost normalisation.
 
     Returns
     -------
     L2Result
     """
-    comparison = compare_roll_schedules(manifest_entries, ts_rolls, max_day_delta)
+    comparison = compare_roll_schedules(
+        manifest_entries, ts_rolls, max_day_delta, tick_size=tick_size,
+    )
     detail_df = comparison.to_dataframe()
     return L2Result(symbol=symbol, comparison=comparison, detail_df=detail_df)
 
@@ -340,7 +400,7 @@ def run_diagnostics(
             )
 
     # L2.
-    l2 = run_l2(manifest_entries, ts_rolls, symbol, max_day_delta)
+    l2 = run_l2(manifest_entries, ts_rolls, symbol, max_day_delta, tick_size)
 
     # L3.
     l3 = run_l3(l2, symbol)

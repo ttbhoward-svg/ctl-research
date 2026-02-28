@@ -210,6 +210,8 @@ def detect_rolls(
     contracts: Dict[str, pd.DataFrame],
     contract_order: List[ContractSpec],
     consecutive_days: int = ROLL_CONSECUTIVE_DAYS,
+    eligible_months: Optional[Sequence[str]] = None,
+    roll_timing: str = "same_day",
 ) -> Tuple[List[RollEvent], pd.DataFrame]:
     """Detect volume-based roll dates across the contract chain.
 
@@ -222,6 +224,14 @@ def detect_rolls(
     consecutive_days : int
         Number of consecutive days where next-contract volume must exceed
         current to trigger a roll.
+    eligible_months : sequence of str, optional
+        If provided, restrict the contract chain to contracts whose month
+        code is in this set (e.g. ``("H","M","U","Z")`` for quarterly).
+        ``None`` (default) means all months are eligible.
+    roll_timing : str
+        ``"same_day"`` (default): active contract switches on the
+        confirmation date.  ``"next_session"``: switch is deferred to
+        the next trading day.
 
     Returns
     -------
@@ -230,6 +240,12 @@ def detect_rolls(
         active_series: DataFrame with ``[date, contract]`` showing which
         contract is active on each date.
     """
+    # Filter eligible months (calibration only — default=None preserves
+    # existing production behaviour).
+    if eligible_months is not None:
+        month_set = set(eligible_months)
+        contract_order = [c for c in contract_order if c.month_code in month_set]
+
     if len(contract_order) < 1:
         return [], pd.DataFrame(columns=["date", "contract"])
 
@@ -246,10 +262,21 @@ def detect_rolls(
     rolls: List[RollEvent] = []
     active_idx = 0
     crossover_count = 0
+    next_session = (roll_timing == "next_session")
+    pending_switch_idx: Optional[int] = None
+    pending_roll: Optional[RollEvent] = None
 
     active_records: List[Dict] = []
 
     for d in all_dates:
+        # Apply pending switch from previous day (next_session timing).
+        if pending_switch_idx is not None and pending_roll is not None:
+            pending_roll.date = d  # effective roll date = today
+            rolls.append(pending_roll)
+            active_idx = pending_switch_idx
+            pending_switch_idx = None
+            pending_roll = None
+
         current_sym = contract_order[active_idx].symbol
         next_idx = active_idx + 1
 
@@ -271,15 +298,20 @@ def detect_rolls(
                 adj = 0.0
                 if not (np.isnan(cur_close) or np.isnan(nxt_close)):
                     adj = nxt_close - cur_close
-                rolls.append(RollEvent(
+                roll_evt = RollEvent(
                     date=d,
                     from_contract=current_sym,
                     to_contract=next_sym,
                     from_close=cur_close,
                     to_close=nxt_close,
                     adjustment=adj,
-                ))
-                active_idx = next_idx
+                )
+                if next_session:
+                    pending_roll = roll_evt
+                    pending_switch_idx = next_idx
+                else:
+                    rolls.append(roll_evt)
+                    active_idx = next_idx
                 crossover_count = 0
 
         # Only record dates where the active contract has data.
@@ -413,6 +445,8 @@ def build_continuous(
     data_dir: Path,
     consecutive_days: int = ROLL_CONSECUTIVE_DAYS,
     convention: AdjustmentConvention = "subtract",
+    eligible_months: Optional[Sequence[str]] = None,
+    roll_timing: str = "same_day",
 ) -> ContinuousResult:
     """Build a continuous back-adjusted series for one root symbol.
 
@@ -426,6 +460,12 @@ def build_continuous(
         Consecutive volume-crossover days to trigger a roll.
     convention : {"subtract", "add"}
         Adjustment convention (see ``apply_panama_adjustment``).
+    eligible_months : sequence of str, optional
+        Restrict the contract chain to these month codes
+        (calibration only; default ``None`` = all months).
+    roll_timing : str
+        ``"same_day"`` (default) or ``"next_session"``
+        (calibration only; see ``detect_rolls``).
 
     Returns
     -------
@@ -449,7 +489,10 @@ def build_continuous(
 
     contract_order = parse_contracts(list(contracts.keys()))
 
-    rolls, active_series = detect_rolls(contracts, contract_order, consecutive_days)
+    rolls, active_series = detect_rolls(
+        contracts, contract_order, consecutive_days,
+        eligible_months=eligible_months, roll_timing=roll_timing,
+    )
     continuous = apply_panama_adjustment(contracts, active_series, rolls, convention)
 
     roll_log = _build_roll_log(rolls, len(contracts))

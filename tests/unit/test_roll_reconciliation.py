@@ -13,6 +13,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from ctl.roll_reconciliation import (
+    ALIGN_UNMATCHED_PENALTY,
+    ALIGN_W_DAY,
+    ALIGN_W_GAP,
     DEFAULT_DEDUP_WINDOW,
     DriftExplanationResult,
     RollComparisonResult,
@@ -692,3 +695,191 @@ class TestDeriveFromSpreadDedup:
             unadj, adj, tick_size=0.25, min_gap_ticks=2,
         )
         assert len(events) == 0
+
+
+# ===========================================================================
+# Monotonic alignment (Task H.2)
+# ===========================================================================
+
+def _make_quarterly_schedule(
+    start_year: int,
+    n_rolls: int,
+    gap_base: float = 10.0,
+    day_offset: int = 0,
+):
+    """Build canonical and TS roll schedules for quarterly rolls.
+
+    day_offset shifts every TS date by a fixed number of days.
+    """
+    import datetime
+    base_months = [3, 6, 9, 12]
+    can_entries = []
+    ts_entries = []
+    for i in range(n_rolls):
+        y = start_year + (i * 3) // 12
+        m = base_months[(i * 3 // 3) % 4]
+        d = 15
+        can_date = datetime.date(y, m, d)
+        gap = gap_base + i * 0.5
+        can_entries.append(_make_manifest_entry(
+            str(can_date), gap=gap,
+            from_contract=f"ES{chr(65+i%4)}{y%10}",
+            to_contract=f"ES{chr(65+(i+1)%4)}{y%10}",
+        ))
+        ts_date = can_date + datetime.timedelta(days=day_offset)
+        ts_entries.append(_make_ts_roll(str(ts_date), gap=gap + 0.1))
+    return can_entries, ts_entries
+
+
+class TestMonotonicAlignmentConstantShift:
+    """ES-like: constant +1 day shift should NOT cascade to mass FAIL."""
+
+    def test_all_shifted_1_day_produces_all_watch(self):
+        """32 rolls each shifted +1 day → 0 FAIL, 32 WATCH."""
+        can, ts = _make_quarterly_schedule(2019, 32, day_offset=1)
+        result = compare_roll_schedules(can, ts, max_day_delta=2)
+        assert result.n_fail == 0
+        assert result.n_watch == 32
+        assert result.n_matched == 0  # none exact
+
+    def test_all_shifted_2_day_produces_all_watch(self):
+        """32 rolls each shifted +2 days → 0 FAIL, 32 WATCH."""
+        can, ts = _make_quarterly_schedule(2019, 32, day_offset=2)
+        result = compare_roll_schedules(can, ts, max_day_delta=2)
+        assert result.n_fail == 0
+        assert result.n_watch == 32
+
+    def test_all_shifted_neg1_day_produces_all_watch(self):
+        """32 rolls each shifted -1 day → 0 FAIL, 32 WATCH."""
+        can, ts = _make_quarterly_schedule(2019, 32, day_offset=-1)
+        result = compare_roll_schedules(can, ts, max_day_delta=2)
+        assert result.n_fail == 0
+        assert result.n_watch == 32
+
+    def test_exact_alignment_all_pass(self):
+        """32 rolls with 0 offset → 32 PASS, 0 FAIL."""
+        can, ts = _make_quarterly_schedule(2019, 32, day_offset=0)
+        result = compare_roll_schedules(can, ts, max_day_delta=2)
+        assert result.n_matched == 32
+        assert result.n_fail == 0
+        assert result.n_watch == 0
+
+
+class TestMonotonicAlignmentDenseWithMissing:
+    """CL-like: dense monthly rolls with sparse missing events."""
+
+    def test_missing_2_ts_rolls_localises_failures(self):
+        """98 canonical, 96 TS (2 missing) → exactly 2 FAIL, rest paired."""
+        import datetime
+        can = []
+        ts = []
+        for i in range(98):
+            y = 2019 + i // 12
+            m = 1 + i % 12
+            d = 15
+            can_date = datetime.date(y, m, d)
+            gap = 0.5 + i * 0.02
+            can.append(_make_manifest_entry(str(can_date), gap=gap))
+            # Skip TS rolls at index 30 and 60.
+            if i not in (30, 60):
+                ts_date = can_date + datetime.timedelta(days=1)
+                ts.append(_make_ts_roll(str(ts_date), gap=gap + 0.01))
+
+        result = compare_roll_schedules(can, ts, max_day_delta=2, tick_size=0.01)
+        assert result.n_fail == 2  # exactly the 2 missing events
+        assert result.n_paired == 96
+
+    def test_missing_5_ts_rolls(self):
+        """50 canonical, 45 TS → exactly 5 FAIL."""
+        import datetime
+        can = []
+        ts = []
+        skip = {5, 15, 25, 35, 45}
+        for i in range(50):
+            y = 2020 + i // 12
+            m = 1 + i % 12
+            can_date = datetime.date(y, m, 15)
+            gap = 1.0 + i * 0.05
+            can.append(_make_manifest_entry(str(can_date), gap=gap))
+            if i not in skip:
+                ts_date = can_date + datetime.timedelta(days=1)
+                ts.append(_make_ts_roll(str(ts_date), gap=gap))
+
+        result = compare_roll_schedules(can, ts, max_day_delta=2, tick_size=0.01)
+        assert result.n_fail == 5
+        assert result.n_paired == 45
+
+    def test_extra_ts_rolls_localised(self):
+        """10 canonical, 12 TS (2 extra) → exactly 2 FAIL from extra TS."""
+        import datetime
+        can = []
+        ts = []
+        for i in range(10):
+            can_date = datetime.date(2020, 1 + i, 15)
+            gap = 5.0
+            can.append(_make_manifest_entry(str(can_date), gap=gap))
+            ts.append(_make_ts_roll(str(can_date), gap=gap))
+        # Add 2 extra TS rolls.
+        ts.append(_make_ts_roll("2020-11-15", gap=5.0))
+        ts.append(_make_ts_roll("2020-12-15", gap=5.0))
+
+        result = compare_roll_schedules(can, ts, max_day_delta=2)
+        assert result.n_matched == 10
+        assert result.unmatched_ts == 2
+        assert result.n_fail == 2
+
+
+class TestMonotonicAlignmentDiagnostics:
+    """Richer diagnostic fields from the alignment."""
+
+    def test_day_delta_histogram(self):
+        """Histogram should count day deltas correctly."""
+        can, ts = _make_quarterly_schedule(2020, 8, day_offset=1)
+        result = compare_roll_schedules(can, ts, max_day_delta=2)
+        assert result.day_delta_histogram.get(1, 0) == 8
+
+    def test_cumulative_signed_shift(self):
+        """Consistent +1 shift → cumulative = +N."""
+        can, ts = _make_quarterly_schedule(2020, 10, day_offset=1)
+        result = compare_roll_schedules(can, ts, max_day_delta=2)
+        assert result.cumulative_signed_day_shift == 10
+
+    def test_negative_cumulative_shift(self):
+        """Consistent -2 shift → cumulative = -2*N."""
+        can, ts = _make_quarterly_schedule(2020, 5, day_offset=-2)
+        result = compare_roll_schedules(can, ts, max_day_delta=2)
+        assert result.cumulative_signed_day_shift == -10
+
+    def test_unmatched_counts(self):
+        """Unmatched canonical/ts counts are correct."""
+        import datetime
+        can = [_make_manifest_entry("2020-03-15")]
+        ts = [
+            _make_ts_roll("2020-03-15"),
+            _make_ts_roll("2020-09-15"),
+        ]
+        result = compare_roll_schedules(can, ts, max_day_delta=2)
+        assert result.unmatched_canonical == 0
+        assert result.unmatched_ts == 1
+
+    def test_n_paired_property(self):
+        """n_paired = n_matched + n_watch."""
+        can, ts = _make_quarterly_schedule(2020, 6, day_offset=1)
+        result = compare_roll_schedules(can, ts, max_day_delta=2)
+        assert result.n_paired == result.n_matched + result.n_watch
+        assert result.n_paired == 6
+
+
+class TestMonotonicAlignmentDeterminism:
+    """Same input → same output, every time."""
+
+    def test_deterministic_output(self):
+        can, ts = _make_quarterly_schedule(2019, 20, day_offset=1)
+        r1 = compare_roll_schedules(can, ts, max_day_delta=2)
+        r2 = compare_roll_schedules(can, ts, max_day_delta=2)
+        assert r1.n_matched == r2.n_matched
+        assert r1.n_watch == r2.n_watch
+        assert r1.n_fail == r2.n_fail
+        assert r1.cumulative_signed_day_shift == r2.cumulative_signed_day_shift
+        for m1, m2 in zip(r1.matches, r2.matches):
+            assert m1.to_dict() == m2.to_dict()
