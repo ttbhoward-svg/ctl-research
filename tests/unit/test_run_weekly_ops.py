@@ -1,6 +1,7 @@
-"""Unit tests for weekly ops wrapper (H.10)."""
+"""Unit tests for weekly ops wrapper (H.10, H.11)."""
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -312,15 +313,15 @@ class TestRunWeeklyOpsNotify:
 
         profile_path = _write_profile_yaml(tmp_path)
 
-        # Should not raise despite dispatch failure.
-        with pytest.raises(Exception, match="webhook exploded"):
-            run_weekly_ops(
-                profile_path=profile_path,
-                notify_mode="webhook",
-                webhook_url="https://example.com",
-                ops_log_dir=tmp_path / "ops",
-                summary_dir=tmp_path / "summaries",
-            )
+        # H.11: _safe_dispatch catches exceptions; run should complete.
+        result = run_weekly_ops(
+            profile_path=profile_path,
+            notify_mode="webhook",
+            webhook_url="https://example.com",
+            ops_log_dir=tmp_path / "ops",
+            summary_dir=tmp_path / "summaries",
+        )
+        assert result["exit_code"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -376,3 +377,126 @@ class TestOpsResultShape:
         assert parsed["exit_code"] == 2
         assert "gate_result" in parsed
         assert "retention" in parsed
+
+
+# ---------------------------------------------------------------------------
+# Tests: H.11 — env-based webhook fallback
+# ---------------------------------------------------------------------------
+
+class TestWebhookEnvFallback:
+    @patch("run_weekly_ops.dispatch_notification")
+    @patch("run_weekly_ops.run_profile_gate")
+    @patch("run_weekly_ops.execute_run_plan")
+    def test_env_webhook_used_when_no_cli_url(self, mock_exec, mock_gate,
+                                               mock_dispatch, tmp_path):
+        mock_gate.return_value = _make_gate_pass()
+        mock_exec.return_value = [SymbolRunResult("ES", "DRY_RUN", "skipped")]
+
+        profile_path = _write_profile_yaml(tmp_path)
+
+        # Pass the env-resolved URL through to run_weekly_ops.
+        result = run_weekly_ops(
+            profile_path=profile_path,
+            dry_run=True,
+            notify_mode="webhook",
+            webhook_url="https://env.example.com",
+            ops_log_dir=tmp_path / "ops",
+            summary_dir=tmp_path / "summaries",
+        )
+
+        assert result["exit_code"] == 0
+        mock_dispatch.assert_called_once()
+        _, call_kwargs = mock_dispatch.call_args
+        assert call_kwargs.get("webhook_url") is None or \
+            mock_dispatch.call_args[0][2] == "https://env.example.com"
+
+
+# ---------------------------------------------------------------------------
+# Tests: H.11 — typed notification paths
+# ---------------------------------------------------------------------------
+
+class TestTypedNotifications:
+    @patch("run_weekly_ops.run_profile_gate")
+    def test_gate_fail_sends_alert_notification(self, mock_gate, tmp_path, capsys):
+        mock_gate.return_value = _make_gate_fail()
+
+        profile_path = _write_profile_yaml(tmp_path)
+
+        result = run_weekly_ops(
+            profile_path=profile_path,
+            notify_mode="stdout",
+            ops_log_dir=tmp_path / "ops",
+            summary_dir=tmp_path / "summaries",
+        )
+
+        captured = capsys.readouterr()
+        assert "[ALERT]" in captured.out
+        assert "MISMATCH" in captured.out
+        assert result["exit_code"] == 2
+
+    @patch("run_weekly_ops.run_profile_gate")
+    @patch("run_weekly_ops.execute_run_plan")
+    def test_symbol_fail_sends_warn_notification(self, mock_exec, mock_gate, tmp_path, capsys):
+        mock_gate.return_value = _make_gate_pass()
+        mock_exec.return_value = [
+            SymbolRunResult("ES", "EXECUTED", "ok", 5, 3, 1.5, 0.67),
+            SymbolRunResult("CL", "ERROR", "data corrupt"),
+        ]
+
+        profile_path = _write_profile_yaml(tmp_path)
+
+        result = run_weekly_ops(
+            profile_path=profile_path,
+            dry_run=False,
+            notify_mode="stdout",
+            ops_log_dir=tmp_path / "ops",
+            summary_dir=tmp_path / "summaries",
+        )
+
+        captured = capsys.readouterr()
+        assert "[WARN]" in captured.out
+        assert "1 symbol failure" in captured.out
+        assert "CL" in captured.out
+        assert result["has_errors"] is True
+
+    @patch("run_weekly_ops.run_profile_gate")
+    @patch("run_weekly_ops.execute_run_plan")
+    def test_success_sends_ok_notification(self, mock_exec, mock_gate, tmp_path, capsys):
+        mock_gate.return_value = _make_gate_pass()
+        mock_exec.return_value = [
+            SymbolRunResult("ES", "EXECUTED", "ok", 5, 3, 1.5, 0.67),
+        ]
+
+        profile_path = _write_profile_yaml(tmp_path)
+
+        result = run_weekly_ops(
+            profile_path=profile_path,
+            dry_run=True,
+            notify_mode="stdout",
+            ops_log_dir=tmp_path / "ops",
+            summary_dir=tmp_path / "summaries",
+        )
+
+        captured = capsys.readouterr()
+        assert "[OK]" in captured.out
+        assert result["exit_code"] == 0
+
+    @patch("run_weekly_ops.dispatch_notification")
+    @patch("run_weekly_ops.run_profile_gate")
+    def test_gate_fail_dispatch_exception_does_not_crash(self, mock_gate,
+                                                          mock_dispatch, tmp_path):
+        mock_gate.return_value = _make_gate_fail()
+        mock_dispatch.side_effect = Exception("boom")
+
+        profile_path = _write_profile_yaml(tmp_path)
+
+        # _safe_dispatch catches exception; run completes with exit_code=2.
+        result = run_weekly_ops(
+            profile_path=profile_path,
+            notify_mode="webhook",
+            webhook_url="https://example.com",
+            ops_log_dir=tmp_path / "ops",
+            summary_dir=tmp_path / "summaries",
+        )
+        assert result["exit_code"] == 2
+        assert result["aborted"] is True

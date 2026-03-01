@@ -706,6 +706,47 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
 3. Add weekly/monthly HTF data loading for MTFA confluence flags.
 4. Set up systemd timer or cron job for automated weekly execution.
 
+---
+
+## H.11 — Production Notification Wiring + Scheduler Validation — 2026-03-01
+
+### Decision Entry — 2026-03-01
+
+- **Scope:** Notification infrastructure hardening, webhook config resolution, typed message templates, scheduler runbook.
+- **Inputs:** H.10 ops wrapper, existing `ops_notifier.py`, cron/launchd scheduler requirements.
+- **Decision:** Add production-grade webhook configuration path (`CTL_OPS_WEBHOOK_URL` env var with CLI override), typed notification messages for gate-fail/symbol-fail/success outcomes, safe dispatch wrapper, and a comprehensive runbook.
+- **Rationale:** Production scheduler invocations require: (a) secure webhook config that doesn't embed URLs in scripts, (b) distinct notification severity for different failure modes, (c) notification failures must not crash the run, (d) operators need a runbook with env setup, command examples, and troubleshooting.
+- **Gate impact:** None — notification layer sits outside the gate/acceptance path.
+- **Files:**
+  - `src/ctl/ops_notifier.py` — `load_webhook_url()`, `build_gate_fail_message()`, `build_symbol_fail_message()`, `build_success_message()`, enhanced webhook payload with `level` and `meta`
+  - `scripts/run_weekly_ops.py` — `_safe_dispatch()`, typed notification routing, `CTL_OPS_WEBHOOK_URL` env fallback with legacy `OPS_WEBHOOK_URL` support
+  - `docs/ops/weekly_ops_runbook.md` — env setup, commands, cron/launchd examples, exit codes, troubleshooting
+  - `tests/unit/test_ops_notifier.py` — 33 tests (was 16, +17 new)
+  - `tests/unit/test_run_weekly_ops.py` — 20 tests (was 15, +5 new)
+
+### Webhook Payload Shape
+
+```json
+{
+  "text": "human-readable message",
+  "level": "info | warn | alert",
+  "meta": {"exit_code": 0, "timestamp": "..."}
+}
+```
+
+### URL Resolution Precedence
+
+1. `--webhook-url` CLI argument
+2. `CTL_OPS_WEBHOOK_URL` environment variable
+3. `OPS_WEBHOOK_URL` legacy environment variable
+4. None (webhook skipped with warning)
+
+### Next Actions
+1. Deploy webhook endpoint and validate end-to-end flow with real Slack channel.
+2. Install cron/launchd job using runbook instructions.
+3. Calibrate per-instrument slippage values and wire into `SimConfig`.
+4. Add weekly/monthly HTF data loading for MTFA confluence flags.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:

@@ -33,8 +33,12 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from ctl.operating_profile import load_operating_profile  # noqa: E402
 from ctl.ops_notifier import (  # noqa: E402
+    build_gate_fail_message,
     build_ops_message,
+    build_success_message,
+    build_symbol_fail_message,
     dispatch_notification,
+    load_webhook_url,
 )
 from ctl.run_orchestrator import (  # noqa: E402
     build_run_plan,
@@ -125,6 +129,25 @@ def save_ops_log(ops_result: dict, out_dir: Path = DEFAULT_OPS_LOG_DIR) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Safe notification dispatch (H.11)
+# ---------------------------------------------------------------------------
+
+def _safe_dispatch(
+    notify_mode: str,
+    message: str,
+    webhook_url: str | None,
+    level: str = "info",
+    meta: dict | None = None,
+) -> None:
+    """Dispatch notification without crashing the run on failure."""
+    try:
+        dispatch_notification(notify_mode, message, webhook_url,
+                              level=level, meta=meta)
+    except Exception:
+        logger.warning("Notification dispatch failed; continuing.", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # Core wrapper
 # ---------------------------------------------------------------------------
 
@@ -170,8 +193,9 @@ def run_weekly_ops(
             },
         }
         save_ops_log(ops_result, ops_log_dir)
-        msg = build_ops_message(ops_result)
-        dispatch_notification(notify_mode, msg, webhook_url)
+        msg = build_gate_fail_message(ops_result)
+        _safe_dispatch(notify_mode, msg, webhook_url, level="alert",
+                       meta={"exit_code": 2, "timestamp": timestamp})
         return ops_result
 
     # --- Build plan + execute ---
@@ -216,8 +240,16 @@ def run_weekly_ops(
     }
 
     save_ops_log(ops_result, ops_log_dir)
-    msg = build_ops_message(ops_result)
-    dispatch_notification(notify_mode, msg, webhook_url)
+
+    # --- Dispatch typed notification ---
+    if has_errors:
+        msg = build_symbol_fail_message(ops_result)
+        _safe_dispatch(notify_mode, msg, webhook_url, level="warn",
+                       meta={"exit_code": 0, "has_errors": True, "timestamp": timestamp})
+    else:
+        msg = build_success_message(ops_result)
+        _safe_dispatch(notify_mode, msg, webhook_url, level="info",
+                       meta={"exit_code": 0, "timestamp": timestamp})
     return ops_result
 
 
@@ -262,8 +294,8 @@ def main() -> None:
     parser.add_argument(
         "--webhook-url",
         type=str,
-        default=os.environ.get("OPS_WEBHOOK_URL"),
-        help="Webhook URL (env: OPS_WEBHOOK_URL).",
+        default=None,
+        help="Webhook URL (env: CTL_OPS_WEBHOOK_URL, legacy: OPS_WEBHOOK_URL).",
     )
     parser.add_argument(
         "--retention-days",
@@ -273,12 +305,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Resolve webhook URL: CLI arg > CTL_OPS_WEBHOOK_URL > legacy OPS_WEBHOOK_URL.
+    resolved_url = load_webhook_url(args.webhook_url)
+    if resolved_url is None:
+        resolved_url = os.environ.get("OPS_WEBHOOK_URL") or None
+
     ops_result = run_weekly_ops(
         profile_path=args.profile,
         include_non_gating=args.include_non_gating,
         dry_run=args.dry_run,
         notify_mode=args.notify,
-        webhook_url=args.webhook_url,
+        webhook_url=resolved_url,
         retention_days=args.retention_days,
     )
 

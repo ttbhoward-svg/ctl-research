@@ -1,20 +1,50 @@
-"""Ops notification helpers (H.10).
+"""Ops notification helpers (H.10, H.11).
 
 Builds human-readable ops messages from run result dicts and dispatches
 them to configurable backends (stdout, webhook).
 
-The webhook payload is a simple ``{"text": ...}`` JSON body, compatible
-with Slack incoming-webhook endpoints.
+The webhook payload is ``{"text": ..., "level": ..., "meta": {...}}``
+JSON body, compatible with Slack incoming-webhook endpoints.
+
+H.11 additions: ``load_webhook_url`` for secure config resolution,
+typed message builders (``build_gate_fail_message``,
+``build_symbol_fail_message``, ``build_success_message``).
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+# Environment variable for webhook URL (H.11).
+CTL_OPS_WEBHOOK_ENV = "CTL_OPS_WEBHOOK_URL"
+
+
+# ---------------------------------------------------------------------------
+# Webhook configuration (H.11)
+# ---------------------------------------------------------------------------
+
+def load_webhook_url(cli_url: Optional[str] = None) -> Optional[str]:
+    """Resolve webhook URL with precedence: CLI arg > env var > None.
+
+    Parameters
+    ----------
+    cli_url : str or None
+        Explicitly provided URL (e.g. from ``--webhook-url``).
+
+    Returns
+    -------
+    str or None
+        Resolved URL, or None if no source provides one.
+    """
+    if cli_url:
+        return cli_url
+    return os.environ.get(CTL_OPS_WEBHOOK_ENV) or None
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +104,99 @@ def build_ops_message(result: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Typed message builders (H.11)
+# ---------------------------------------------------------------------------
+
+def build_gate_fail_message(result: dict) -> str:
+    """Build a gate-failure notification message.
+
+    Parameters
+    ----------
+    result : dict
+        Ops summary dict where ``gate_passed`` is False.
+
+    Returns
+    -------
+    str
+    """
+    lines = ["[ALERT] Gate mismatch — portfolio run aborted."]
+    lines.append("  Gate: MISMATCH")
+
+    gate_result = result.get("gate_result", {})
+    for sr in gate_result.get("symbol_results", []):
+        if not sr.get("passed", True):
+            lines.append(
+                f"    - {sr['symbol']}: expected {sr.get('expected', '?')}, "
+                f"got {sr.get('actual', '?')}"
+            )
+
+    ts = result.get("timestamp", "")
+    if ts:
+        lines.append(f"  Timestamp: {ts}")
+    return "\n".join(lines)
+
+
+def build_symbol_fail_message(result: dict) -> str:
+    """Build a notification message for symbol-level failures.
+
+    Parameters
+    ----------
+    result : dict
+        Ops summary dict with errors in ``symbol_run_results``.
+
+    Returns
+    -------
+    str
+    """
+    sym_results = result.get("symbol_run_results", [])
+    errors = [s for s in sym_results if s.get("status") == "ERROR"]
+
+    lines = [f"[WARN] Portfolio run completed with {len(errors)} symbol failure(s)."]
+    lines.append("  Gate: PASS")
+    for e in errors:
+        lines.append(f"    - {e['symbol']}: {e.get('detail', 'unknown error')}")
+
+    ts = result.get("timestamp", "")
+    if ts:
+        lines.append(f"  Timestamp: {ts}")
+    return "\n".join(lines)
+
+
+def build_success_message(result: dict) -> str:
+    """Build a success notification message.
+
+    Parameters
+    ----------
+    result : dict
+        Ops summary dict for a clean run.
+
+    Returns
+    -------
+    str
+    """
+    lines = ["[OK] Portfolio run completed successfully."]
+    lines.append("  Gate: PASS")
+
+    dry_run = result.get("dry_run", False)
+    if dry_run:
+        lines.append("  Mode: dry-run")
+
+    sym_results = result.get("symbol_run_results", [])
+    executed = [s for s in sym_results if s.get("status") == "EXECUTED"]
+    if executed:
+        total_trades = sum(s.get("trade_count", 0) for s in executed)
+        total_r = sum(s.get("total_r", 0.0) for s in executed)
+        lines.append(
+            f"  Executed: {len(executed)} symbol(s), {total_trades} trades, R={total_r:.2f}"
+        )
+
+    ts = result.get("timestamp", "")
+    if ts:
+        lines.append(f"  Timestamp: {ts}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Dispatch backends
 # ---------------------------------------------------------------------------
 
@@ -86,11 +209,13 @@ def notify_webhook(
     message: str,
     webhook_url: str,
     timeout: int = 10,
+    level: str = "info",
+    meta: Optional[dict] = None,
 ) -> bool:
     """Post ops message to a webhook endpoint.
 
-    Sends ``{"text": message}`` as JSON.  Compatible with Slack
-    incoming webhooks.
+    Sends ``{"text": message, "level": level, "meta": {...}}`` as JSON.
+    Compatible with Slack incoming webhooks (extra fields ignored).
 
     Parameters
     ----------
@@ -100,16 +225,23 @@ def notify_webhook(
         Destination URL.
     timeout : int
         Request timeout in seconds.
+    level : str
+        Severity level (``"info"``, ``"warn"``, ``"alert"``).
+    meta : dict or None
+        Optional metadata dict included in the payload.
 
     Returns
     -------
     bool
         True if the request succeeded (2xx), False otherwise.
     """
+    payload: dict = {"text": message, "level": level}
+    if meta:
+        payload["meta"] = meta
     try:
         resp = requests.post(
             webhook_url,
-            json={"text": message},
+            json=payload,
             timeout=timeout,
         )
         if resp.ok:
@@ -128,6 +260,8 @@ def dispatch_notification(
     mode: str,
     message: str,
     webhook_url: Optional[str] = None,
+    level: str = "info",
+    meta: Optional[dict] = None,
 ) -> None:
     """Route a notification to the selected backend.
 
@@ -139,6 +273,10 @@ def dispatch_notification(
         The ops message.
     webhook_url : str or None
         Required when *mode* is ``"webhook"``.
+    level : str
+        Severity level forwarded to webhook backend.
+    meta : dict or None
+        Optional metadata forwarded to webhook backend.
     """
     if mode == "none":
         return
@@ -149,6 +287,6 @@ def dispatch_notification(
         if not webhook_url:
             logger.warning("Webhook URL not provided; skipping notification.")
             return
-        notify_webhook(message, webhook_url)
+        notify_webhook(message, webhook_url, level=level, meta=meta)
         return
     logger.warning("Unknown notification mode '%s'; skipping.", mode)
