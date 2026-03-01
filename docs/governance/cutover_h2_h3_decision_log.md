@@ -179,6 +179,41 @@ Record data-cutover reconciliation decisions, rationale, and next-gate criteria 
 2. Evaluate equity/ETF basis pipelines under `raw` and `split_adjusted` modes.
 3. Issue updated NO-GO/WATCH/CONDITIONAL-GO decision based on acceptance results.
 
+## Decision Entry - 2026-03-01 (H.5 Outcome)
+
+### Scope
+- Ran canonical futures acceptance evaluator (`acceptance_from_diagnostics`) for ES/CL/PL using current diagnostics.
+
+### Inputs
+- ES: `strict_status=FAIL`, `policy_status=WATCH`, acceptance `WATCH`
+  - Reason: mean drift `7.3289 > 5.0000`
+- CL: `strict_status=FAIL`, `policy_status=FAIL`, acceptance `REJECT`
+  - Reasons:
+    - unmatched rolls `26.80% > 10.00%`
+    - FAIL matches `73.24% > 15.00%`
+- PL: `strict_status=FAIL`, `policy_status=FAIL`, acceptance `REJECT`
+  - Reasons:
+    - paired rolls `0 < 20`
+    - unmatched rolls `100.00% > 10.00%`
+    - mean drift `181.1059 > 5.0000`
+
+### Decision
+- Canonical futures acceptance result: **NO-GO** (portfolio-level), with mixed per-symbol status:
+  - ES = WATCH
+  - CL = REJECT
+  - PL = REJECT
+
+### Rationale
+- H.5 acceptance framework is functioning as intended and produces explainable, criterion-level decisions.
+- Current CL/PL diagnostics exceed hard acceptance constraints.
+- ES remains close but not yet acceptable due to drift threshold breach.
+
+### Next Actions
+1. CL: run targeted roll policy refinement and session/basis diagnostics to reduce unmatched/fail fractions.
+2. PL: verify TS custom series quality/coverage and rebuild manifest/continuous alignment before re-evaluation.
+3. ES: investigate drift contributors and attempt reduction below mean drift threshold.
+4. Re-run H.5 evaluator and issue updated gate decision.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
