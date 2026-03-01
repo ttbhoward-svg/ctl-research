@@ -33,6 +33,7 @@ import pandas as pd
 from ctl.b1_detector import B1Params, compute_indicators, detect_triggers
 from ctl.indicators import ema
 from ctl.normalization import AssetClass, NormalizationMode, normalize_ohlcv
+from ctl.overlap import align_to_overlap, compute_overlap_window, validate_min_overlap
 from ctl.simulator import SimConfig, TradeResult, simulate_all
 
 # ---------------------------------------------------------------------------
@@ -392,6 +393,8 @@ def run_parity_suite(
     reference_mode: NormalizationMode = "raw",
     primary_asset_class: Optional[AssetClass] = None,
     reference_asset_class: Optional[AssetClass] = None,
+    enforce_overlap: bool = False,
+    min_overlap_bars: int = 0,
 ) -> ParitySuiteResult:
     """Run all three parity checks for one symbol.
 
@@ -419,6 +422,13 @@ def run_parity_suite(
         Asset class for primary frame.  Required if mode != ``"raw"``.
     reference_asset_class : AssetClass, optional
         Asset class for reference frame.  Required if mode != ``"raw"``.
+    enforce_overlap : bool
+        If True, trim both frames to their overlapping date range
+        before running parity checks (default False).
+    min_overlap_bars : int
+        Minimum number of overlapping bars required.  Only enforced
+        when ``enforce_overlap=True``.  Raises ``ValueError`` if
+        the overlap is insufficient (default 0 — no minimum).
 
     Returns
     -------
@@ -435,6 +445,13 @@ def run_parity_suite(
             reference, asset_class=reference_asset_class,
             mode=reference_mode, source="reference",
         )
+
+    # Overlap enforcement.
+    if enforce_overlap:
+        _, _, n_overlap = compute_overlap_window(primary, reference)
+        if min_overlap_bars > 0:
+            validate_min_overlap(n_overlap, min_overlap_bars)
+        primary, reference = align_to_overlap(primary, reference)
 
     ema_result = check_ema_parity(
         primary, reference, ema_period, max_divergence_pct,
@@ -468,6 +485,8 @@ def run_cutover_suite(
     reference_mode: NormalizationMode = "raw",
     primary_asset_class: Optional[AssetClass] = None,
     reference_asset_class: Optional[AssetClass] = None,
+    enforce_overlap: bool = False,
+    min_overlap_bars: int = 0,
 ) -> Dict[str, ParitySuiteResult]:
     """Run parity checks across multiple symbols.
 
@@ -487,6 +506,10 @@ def run_cutover_suite(
         Asset class for primary frames.
     reference_asset_class : AssetClass, optional
         Asset class for reference frames.
+    enforce_overlap : bool
+        If True, trim frames to overlapping date range (default False).
+    min_overlap_bars : int
+        Minimum overlap bars when ``enforce_overlap=True`` (default 0).
 
     Returns
     -------
@@ -507,6 +530,8 @@ def run_cutover_suite(
             reference_mode=reference_mode,
             primary_asset_class=primary_asset_class,
             reference_asset_class=reference_asset_class,
+            enforce_overlap=enforce_overlap,
+            min_overlap_bars=min_overlap_bars,
         )
     return results
 

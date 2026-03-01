@@ -387,6 +387,44 @@ class TestPersistence:
 # Tests: Deterministic
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Tests: Overlap enforcement
+# ---------------------------------------------------------------------------
+
+class TestOverlapEnforcement:
+    def test_enforce_overlap_trims_frames(self):
+        """Overlap enforcement should trim non-overlapping tails."""
+        primary = _make_simple_ohlcv(n=100)
+        reference = _make_simple_ohlcv(n=100)
+        # Shift reference dates forward so only partial overlap.
+        reference["Date"] = pd.bdate_range("2020-03-01", periods=100)
+        result = run_parity_suite(
+            primary, reference, "/ES", enforce_overlap=True,
+        )
+        # Both frames were trimmed to overlap; EMA comparison should
+        # reflect only the overlapping window (fewer bars than full).
+        assert result.ema.n_primary_only == 0
+        assert result.ema.n_reference_only == 0
+
+    def test_min_overlap_bars_raises_on_insufficient(self):
+        """min_overlap_bars should raise when overlap is too small."""
+        primary = _make_simple_ohlcv(n=50)
+        reference = _make_simple_ohlcv(n=50)
+        # Shift reference to create very small overlap.
+        reference["Date"] = pd.bdate_range("2020-04-01", periods=50)
+        with pytest.raises(ValueError, match="Insufficient overlap"):
+            run_parity_suite(
+                primary, reference, "/ES",
+                enforce_overlap=True, min_overlap_bars=200,
+            )
+
+    def test_default_no_overlap_enforcement(self):
+        """Default (enforce_overlap=False) is backward compatible."""
+        df = _make_perfect_b1()
+        result = run_parity_suite(df, df.copy(), "/ES")
+        assert result.all_passed is True
+
+
 class TestDeterministic:
     def test_same_input_same_output(self):
         df = _make_perfect_b1()

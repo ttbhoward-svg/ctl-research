@@ -155,6 +155,30 @@ Record data-cutover reconciliation decisions, rationale, and next-gate criteria 
 3. Add overlap-window enforcement utility for parity runs to eliminate coverage contamination.
 4. Rerun policy-gated matrix and issue updated NO-GO/WATCH/CONDITIONAL-GO decision.
 
+## Decision Entry — H.5 Prep (Canonical Acceptance Framework)
+
+### Scope
+- H.5: Canonical futures acceptance based on explainability diagnostics; overlap enforcement for parity runs.
+
+### Decision
+- Canonical futures acceptance uses L2/L3/L4 explainability metrics (roll matching, gap divergence, drift) — NOT external exact price match.
+- External parity (TradeStation, Norgate) remains reference-only diagnostics.
+- Overlap-window enforcement prevents coverage-mismatch contamination in parity comparisons.
+
+### Rationale
+- Cross-provider exact parity is structurally infeasible due to roll schedule, session convention, and adjustment-basis differences.
+- Acceptance criteria should measure internal consistency and explainability of divergence, not magnitude of provider disagreement.
+
+### Gate Impact
+- No threshold changes (EMA_MAX_DIVERGENCE_PCT, R_DIFF_THRESHOLD unchanged).
+- No strategy logic changes.
+- Backward-compatible defaults on all modified functions.
+
+### Next Actions
+1. Rerun policy-gated acceptance matrix for ES/CL/PL using `evaluate_futures_acceptance`.
+2. Evaluate equity/ETF basis pipelines under `raw` and `split_adjusted` modes.
+3. Issue updated NO-GO/WATCH/CONDITIONAL-GO decision based on acceptance results.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:

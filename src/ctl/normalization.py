@@ -217,3 +217,44 @@ def normalize_ohlcv(
     out["Volume"] = pd.to_numeric(out["Volume"], errors="coerce").fillna(0).astype(float)
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# Basis metadata
+# ---------------------------------------------------------------------------
+
+#: Human-readable descriptions for each normalization mode.
+_ADJUSTMENT_BASIS_DESC = {
+    "raw": "unadjusted (raw)",
+    "split_adjusted": "split-adjusted only",
+    "total_return_adjusted": "total-return adjusted (splits + dividends)",
+}
+
+
+def basis_metadata(
+    mode: NormalizationMode,
+    asset_class: AssetClass,
+    source: str = "",
+) -> dict:
+    """Return a dict describing the normalization basis assumptions.
+
+    Parameters
+    ----------
+    mode : NormalizationMode
+        One of ``"raw"``, ``"split_adjusted"``, ``"total_return_adjusted"``.
+    asset_class : AssetClass
+        ``"futures"``, ``"equity"``, or ``"etf"``.
+    source : str
+        Provider label (e.g. ``"databento"``).
+
+    Returns
+    -------
+    dict
+        Keys: ``mode``, ``asset_class``, ``source``, ``adjustment_basis``.
+    """
+    return {
+        "mode": mode,
+        "asset_class": asset_class,
+        "source": source,
+        "adjustment_basis": _ADJUSTMENT_BASIS_DESC.get(mode, mode),
+    }
