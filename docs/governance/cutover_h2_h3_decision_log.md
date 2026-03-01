@@ -505,6 +505,69 @@ Key findings:
 2. Integrate gate script into pre-run workflow for live-sim progression.
 3. Create new operating profile version (v2) if any symbol status changes in a future cycle.
 
+## Decision Entry - 2026-03-01 (H.8 Execution Readiness Wiring)
+
+### Scope
+- Wire gate-first portfolio runner that enforces operating-profile gate check before any strategy execution.
+- Provide dry-run mode, JSON output, and run-summary persistence.
+
+### Inputs
+- H.7 operating profile locked and gate script passing (ES=WATCH, CL=ACCEPT, PL=WATCH).
+- Portfolio recommendation: CONDITIONAL GO for research/paper/live-sim.
+- No existing run entrypoint enforced gate check before execution.
+
+### Decision
+- Implement `scripts/run_weekly_b1_portfolio.py` as the canonical run entrypoint.
+- Gate check always runs first; mismatch aborts with exit 2.
+- Orchestrator logic (`src/ctl/run_orchestrator.py`) is testable, pure-function-based.
+- Strategy executor is pluggable (default no-op placeholder for current cycle).
+- Run summaries persisted as JSON under `data/processed/cutover_v1/run_summaries/`.
+
+### Rationale
+- Gate-first enforcement prevents strategy execution when acceptance state has drifted from locked expectations.
+- Pluggable executor pattern allows strategy wiring without modifying gate/plan infrastructure.
+- Dry-run mode supports pre-flight validation without side effects.
+
+### Gate Impact
+- No threshold changes.
+- No strategy logic changes.
+- No changes to acceptance framework semantics.
+- Backward-compatible additions only.
+
+### Runbook
+
+```bash
+# Pre-run gate check only (H.7):
+python scripts/check_operating_profile.py
+python scripts/check_operating_profile.py --json
+
+# Full gate-first run (H.8):
+python scripts/run_weekly_b1_portfolio.py
+
+# Dry run (gate + plan, no execution):
+python scripts/run_weekly_b1_portfolio.py --dry-run
+
+# Include non-gating symbols (PA):
+python scripts/run_weekly_b1_portfolio.py --include-non-gating
+
+# JSON output:
+python scripts/run_weekly_b1_portfolio.py --json
+
+# Custom profile:
+python scripts/run_weekly_b1_portfolio.py --profile configs/cutover/operating_profile_v1.yaml
+```
+
+**Exit codes:**
+- `0` — gate passed, run completed (or dry-run plan returned)
+- `2` — gate mismatch, run aborted
+
+**On gate mismatch:** Do NOT override. Investigate which symbol's acceptance status changed, update the decision log, and if appropriate create a new operating profile version.
+
+### Next Actions
+1. Wire actual strategy executor callback when B1 strategy module is ready.
+2. Add Slack/email notification hook on gate mismatch for production alerting.
+3. Integrate runner into scheduled cron/task for automated weekly execution.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
