@@ -1,0 +1,53 @@
+# Operating Profile v1 — Locked configuration for cutover cycle.
+#
+# This file is the machine-readable source of truth for the current
+# operational state.  The gate script (scripts/check_operating_profile.py)
+# re-derives acceptance from live diagnostics and compares against the
+# expected statuses recorded here.
+#
+# Do NOT edit expected_status values without a corresponding decision-log
+# entry in docs/governance/cutover_h2_h3_decision_log.md.
+
+cycle_id: cutover_v1
+locked_date: "2026-03-01"
+portfolio_recommendation: CONDITIONAL GO
+portfolio_scope: futures_only
+
+gating_universe:
+  - ES
+  - CL
+  - PL
+
+non_gating_symbols:
+  - PA
+  - AAPL
+  - XLE
+
+symbol_settings:
+  ES:
+    tick_size: 0.25
+    max_day_delta: 3
+    expected_status: WATCH
+    notes: >-
+      Mean drift above threshold (7.33 > 5.0); pairing clean (n_fail=0).
+      No variant tuning resolves drift this cycle.
+
+  CL:
+    tick_size: 0.01
+    max_day_delta: 3
+    expected_status: ACCEPT
+    notes: >-
+      Fail fraction reduced to 13.46% under calibrated roll policy
+      (cd=2, all months, next_session, convention=add).
+
+  PL:
+    tick_size: 0.10
+    max_day_delta: 2
+    expected_status: WATCH
+    notes: >-
+      Rebuilt from genuine Platinum outrights. Mean gap diff 1.66 and
+      mean drift 8.28 exceed soft thresholds.
+
+policy_constraints:
+  thresholds_locked: true
+  strategy_logic_locked: true

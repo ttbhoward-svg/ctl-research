@@ -467,6 +467,44 @@ Key findings:
 2. PL: continue gap/drift reduction workstream (target mean gap <= 1.0 and mean drift <= 5.0).
 3. Re-run futures acceptance board at next cycle checkpoint.
 
+## Decision Entry - 2026-03-01 (H.7 Operating Profile Lock + Pre-Run Gate)
+
+### Scope
+- Freeze validated operational state into a machine-readable YAML config.
+- Provide a gate script that re-derives acceptance and compares against locked expectations as a regression guard.
+
+### Inputs
+- Current validated futures status board:
+  - ES = WATCH (mean drift 7.33 > 5.0; pairing clean, n_fail=0)
+  - CL = ACCEPT (fail fraction 13.46% under calibrated roll policy)
+  - PL = WATCH (mean gap diff 1.66, mean drift 8.28 above soft thresholds)
+  - PA = research-enabled, non-gating
+- Portfolio recommendation: CONDITIONAL GO (research/paper/live-sim)
+- Locked operational settings: ES mdd=3, CL mdd=3, PL mdd=2
+- Policy constraints: thresholds locked, strategy logic locked
+
+### Decision
+- Lock operating profile in `configs/cutover/operating_profile_v1.yaml` with per-symbol tick_size, max_day_delta, and expected_status.
+- ES drift floor observed and accepted as WATCH for conditional operation — no further ES variant tuning this cycle.
+- Gate script (`scripts/check_operating_profile.py`) re-derives acceptance from live diagnostics and compares against locked expectations.
+- Any mismatch exits non-zero, providing an automated regression guard against silent acceptance drift.
+
+### Rationale
+- Freezing the profile ensures operational settings cannot silently diverge from governance decisions.
+- The gate script closes the loop between governance decisions and runtime state — any change to data, diagnostics, or acceptance semantics that would alter a symbol's status is immediately surfaced.
+- No threshold or strategy logic changes; this is purely an operational lock and verification mechanism.
+
+### Gate Impact
+- No threshold changes.
+- No strategy logic changes.
+- No changes to acceptance framework semantics.
+- Operating profile provides a single source of truth for the current cycle's locked state.
+
+### Next Actions
+1. Run `scripts/check_operating_profile.py` against real data to confirm all symbols match expected statuses.
+2. Integrate gate script into pre-run workflow for live-sim progression.
+3. Create new operating profile version (v2) if any symbol status changes in a future cycle.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
