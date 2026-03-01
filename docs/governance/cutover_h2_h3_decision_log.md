@@ -364,6 +364,43 @@ Key findings:
 2. Execute PL remediation to move WATCH -> ACCEPT.
 3. Continue PA enhancement track and promote PA to gating scope in a later cycle once harmonization criteria are met.
 
+## Decision Entry - 2026-03-01 (H.6 ES Sweep Outcome and Portfolio Recommendation)
+
+### Scope
+- Ran ES roll-policy/convention sweep to determine whether ES can be moved from WATCH to ACCEPT without threshold changes.
+
+### Inputs
+- ES sweep variants tested:
+  - `consecutive_days in {1,2,3}`
+  - `roll_timing in {same_day, next_session}`
+  - `convention in {add, subtract}`
+- Best ES configuration remained:
+  - `consecutive_days=2`, `convention=add` (timing equivalent in current data)
+- Best observed ES metrics:
+  - `n_paired=32`, `n_fail=0`, `mean_gap_diff=0.53125`, `mean_drift=7.328928`
+
+### Decision
+- Maintain ES at **WATCH** for this cycle.
+- No tested ES configuration reduces `mean_drift` below the current acceptance threshold (`5.0`), so ES cannot be promoted to ACCEPT without changing policy thresholds.
+
+### Rationale
+- ES pairing/fail behavior is clean (`n_fail=0`, full pairing under operational day-delta tolerance).
+- Remaining ES blocker is stable mean drift, indicating a structural provider basis difference rather than pipeline instability.
+- Threshold changes are explicitly out of scope for this cycle.
+
+### Gate Impact
+- Current symbol statuses:
+  - ES = WATCH
+  - CL = ACCEPT
+  - PL = WATCH
+  - PA = research-enabled, non-gating
+- Portfolio recommendation for this cycle: **CONDITIONAL GO** (research/paper/live-sim progression), not full GO.
+
+### Next Actions
+1. Continue ES/PL drift-gap reduction efforts without threshold changes.
+2. Re-run portfolio acceptance on next cycle after additional ES/PL harmonization.
+3. Maintain PA as a separate non-gating enhancement track.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
