@@ -249,6 +249,63 @@ Record data-cutover reconciliation decisions, rationale, and next-gate criteria 
 2. Run ES drift-focused remediation to move WATCH toward ACCEPT.
 3. Recompute portfolio-level decision after PL/ES updates.
 
+## Decision Entry - 2026-03-01 (H.6 PL Remediation — Blocker Diagnosis)
+
+### Scope
+- PL remediation loop following H.5 REJECT (0 paired rolls, 100% unmatched, mean drift 181.1).
+- Diagnosis-only: no code changes, no rebuild, no artifact generation.
+
+### Root Cause: Cross-Commodity Mismatch (PA ≠ PL)
+
+The PL acceptance failure is caused by a fundamental data identity error, not a roll-policy or threshold issue.
+
+| Source | Symbol | Commodity | Jan 2018 Price | Coverage |
+|--------|--------|-----------|----------------|----------|
+| Databento raw (`outrights_only/PA/`) | PA* (PAH8, PAM8…) | **Palladium** | ~$1,060 | 86 contracts, 2018–2026 |
+| Existing `PL_continuous.csv` | PA* contracts | **Palladium** | ~$1,059 | Truncated: 378 rows, 4 rolls, ends 2019-03-27 |
+| TS `TS_PL_CUSTOM_UNADJ_1D_*.csv` | PL | **Platinum** | ~$936 | 2,046 rows, 2018–2026 |
+| TS `TS_PL_CUSTOM_ADJ_1D_*.csv` | PL | **Platinum** | ~$1,183 (adj) | 2,046 rows, 2018–2026 |
+| Norgate `NG_PL_1D_*.csv` | PL | **Platinum** | ~$1,207 (adj) | 2,052 rows, 2018–2026 |
+
+Key findings:
+- `outrights_only/` contains directories `ES/`, `CL/`, `PA/` — **no `PL/` directory exists**.
+- `parity_prep.py` uses `PARITY_SYMBOLS = ("ES", "CL", "PA")` — PA (Palladium), not PL (Platinum).
+- `PL_roll_manifest.json` header contains `"symbol": "PA"` despite the filename.
+- The existing `PL_continuous.csv` was built from PA (Palladium) outrights, not PL (Platinum).
+
+### Why All H.5 Metrics Failed
+1. **0 paired rolls** — truncated PA build (4 rolls ending 2019-03) had near-zero overlap with full-range TS PL series (2018–2026).
+2. **100% unmatched** — Palladium roll schedule ≠ Platinum roll schedule (different delivery months).
+3. **mean drift 181.1** — Palladium prices compared against Platinum prices: structurally ~$100–200 apart.
+
+### Two Compounding Issues
+1. **Truncated build**: The PA continuous series stops at 2019-03-27 (only 4 of ~30 expected rolls). A full rebuild from `outrights_only/PA/` (86 files) would produce full PA coverage — but this is PA (Palladium), not PL (Platinum).
+2. **Commodity identity**: No PL (Platinum) outright contract data exists in the Databento extract. PL remediation is gated on acquiring genuine `PL.FUT` contract-level data from Databento.
+
+### Decision
+- Update PL canonical acceptance status to **REJECT (BLOCKED — data acquisition required)**.
+- No code changes, rebuilds, or parameter tuning can resolve this — the underlying contract data is for the wrong commodity.
+- PL remediation is blocked until genuine Platinum (`PL.FUT`) contract-level data is acquired from Databento and placed in `outrights_only/PL/`.
+
+### Rationale
+- The entire PL parity pipeline was comparing Palladium (PA) prices against Platinum (PL) reference series.
+- All H.5 failure metrics (0 paired rolls, 100% unmatched, 181-point drift) are structurally explained by this cross-commodity mismatch.
+- No amount of roll-policy calibration, threshold adjustment, or continuous-builder tuning can fix a wrong-commodity input.
+
+### Gate Impact
+- Symbol-level status update:
+  - ES = WATCH (unchanged)
+  - CL = ACCEPT (unchanged)
+  - PL = **REJECT (BLOCKED)** — data acquisition required
+- Portfolio-level status remains **NO-GO** until PL data blocker is resolved and ES is remediated.
+
+### Next Actions
+1. Acquire genuine PL (Platinum) contract-level data from Databento (`PL.FUT` outrights).
+2. Place acquired data in `outrights_only/PL/` and rebuild `PL_continuous.csv` from Platinum contracts.
+3. Update `parity_prep.py` to include PL in `PARITY_SYMBOLS` (currently only references PA).
+4. Rerun PL acceptance evaluator after rebuild and issue updated gate decision.
+5. Continue ES drift-focused remediation independently (not blocked by PL).
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
