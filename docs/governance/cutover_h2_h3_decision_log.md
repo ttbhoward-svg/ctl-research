@@ -341,6 +341,29 @@ Key findings:
 3. Add PA as separate symbol track (do not alias to PL), with dedicated TS reference exports and diagnostics.
 4. Re-run portfolio acceptance and issue updated gate decision.
 
+## Decision Entry - 2026-03-01 (PA Scope Clarification for Cutover)
+
+### Scope
+- Clarify how PA (Palladium) is handled in cutover gating versus research usage.
+
+### Decision
+- PA is designated **research-enabled, non-gating** for the current cutover cycle.
+- Portfolio cutover gate universe is explicitly: **ES, CL, PL**.
+- PA remains in the project as a separate futures track (no aliasing to PL) and will continue to receive diagnostics and iterative quality improvements.
+
+### Rationale
+- PA contract/bar construction is materially noisier across providers and currently requires additional session/basis harmonization work.
+- Deferring PA from gate-blocking avoids stalling ES/CL/PL production readiness while preserving PA as a high-value research/trading instrument.
+
+### Gate Impact
+- Portfolio-level GO/NO-GO decision for this cycle is computed from ES/CL/PL acceptance only.
+- PA status is tracked separately and cannot block ES/CL/PL cutover progression in this cycle.
+
+### Next Actions
+1. Execute ES remediation to move WATCH -> ACCEPT.
+2. Execute PL remediation to move WATCH -> ACCEPT.
+3. Continue PA enhancement track and promote PA to gating scope in a later cycle once harmonization criteria are met.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
