@@ -1,10 +1,12 @@
-"""Unit tests for run orchestrator and gate-first portfolio runner (H.8)."""
+"""Unit tests for run orchestrator and gate-first portfolio runner (H.8/H.9)."""
 
 import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+import pandas as pd
 import pytest
 import yaml
 
@@ -23,7 +25,9 @@ from ctl.run_orchestrator import (
     RunSummary,
     SymbolRunResult,
     build_run_plan,
+    execute_b1_symbol,
     execute_run_plan,
+    make_b1_executor,
     save_run_summary,
     summarize_run,
 )
@@ -103,6 +107,29 @@ def _write_profile_yaml(tmp_path: Path) -> Path:
     return path
 
 
+def _make_ohlcv_csv(tmp_path: Path, symbol: str, n_bars: int = 200) -> Path:
+    """Write a synthetic OHLCV CSV with enough bars for B1 detection."""
+    np.random.seed(42)
+    dates = pd.bdate_range("2020-01-01", periods=n_bars)
+    close = 100.0 + np.cumsum(np.random.randn(n_bars) * 0.5)
+    high = close + np.abs(np.random.randn(n_bars) * 0.3)
+    low = close - np.abs(np.random.randn(n_bars) * 0.3)
+    open_ = close + np.random.randn(n_bars) * 0.1
+    volume = np.random.randint(1000, 50000, size=n_bars)
+
+    df = pd.DataFrame({
+        "Date": dates,
+        "Open": open_,
+        "High": high,
+        "Low": low,
+        "Close": close,
+        "Volume": volume,
+    })
+    path = tmp_path / f"{symbol}_continuous.csv"
+    df.to_csv(path, index=False)
+    return path
+
+
 # ---------------------------------------------------------------------------
 # Tests: build_run_plan
 # ---------------------------------------------------------------------------
@@ -163,15 +190,6 @@ class TestExecuteRunPlan:
             assert r.status == "DRY_RUN"
             assert "skipped" in r.detail
 
-    def test_default_executor_returns_executed(self):
-        profile = _make_profile()
-        plan = build_run_plan(profile)
-        results = execute_run_plan(plan, dry_run=False)
-
-        assert len(results) == 3
-        for r in results:
-            assert r.status == "EXECUTED"
-
     def test_custom_executor_called(self):
         profile = _make_profile()
         plan = build_run_plan(profile)
@@ -202,6 +220,148 @@ class TestExecuteRunPlan:
         assert len(results) == 4
         symbols_run = [r.symbol for r in results]
         assert "PA" in symbols_run
+
+    def test_partial_failure_does_not_crash_portfolio(self):
+        """One symbol fails, others still run."""
+        profile = _make_profile()
+        plan = build_run_plan(profile)
+
+        call_count = [0]
+
+        def mixed_executor(sym):
+            call_count[0] += 1
+            if sym == "CL":
+                raise RuntimeError("CL data corrupt")
+            return SymbolRunResult(sym, "EXECUTED", f"{sym} ok",
+                                   trigger_count=5, trade_count=3,
+                                   total_r=2.5, win_rate=0.6)
+
+        results = execute_run_plan(plan, executor=mixed_executor)
+        assert call_count[0] == 3  # all three symbols attempted
+        assert results[0].status == "EXECUTED"
+        assert results[1].status == "ERROR"
+        assert "CL data corrupt" in results[1].detail
+        assert results[2].status == "EXECUTED"
+
+
+# ---------------------------------------------------------------------------
+# Tests: SymbolRunResult
+# ---------------------------------------------------------------------------
+
+class TestSymbolRunResult:
+    def test_to_dict_basic(self):
+        r = SymbolRunResult("ES", "EXECUTED", "ok")
+        d = r.to_dict()
+        assert d == {"symbol": "ES", "status": "EXECUTED", "detail": "ok"}
+
+    def test_default_detail_empty(self):
+        r = SymbolRunResult("CL", "DRY_RUN")
+        assert r.detail == ""
+
+    def test_to_dict_with_metrics(self):
+        r = SymbolRunResult("ES", "EXECUTED", "done",
+                            trigger_count=10, trade_count=7,
+                            total_r=5.5, win_rate=0.71)
+        d = r.to_dict()
+        assert d["trigger_count"] == 10
+        assert d["trade_count"] == 7
+        assert d["total_r"] == 5.5
+        assert d["win_rate"] == 0.71
+
+    def test_to_dict_omits_none_metrics(self):
+        """Backward-compatible: no metric keys when None."""
+        r = SymbolRunResult("ES", "DRY_RUN", "skipped")
+        d = r.to_dict()
+        assert "trigger_count" not in d
+        assert "trade_count" not in d
+        assert "total_r" not in d
+        assert "win_rate" not in d
+
+    def test_to_dict_backward_compatible_keys(self):
+        """Core keys always present regardless of metrics."""
+        r = SymbolRunResult("ES", "EXECUTED", "test",
+                            trigger_count=0, trade_count=0,
+                            total_r=0.0, win_rate=0.0)
+        d = r.to_dict()
+        assert "symbol" in d
+        assert "status" in d
+        assert "detail" in d
+
+
+# ---------------------------------------------------------------------------
+# Tests: execute_b1_symbol
+# ---------------------------------------------------------------------------
+
+class TestExecuteB1Symbol:
+    def test_missing_csv_returns_error(self, tmp_path):
+        result = execute_b1_symbol("ES", tmp_path)
+        assert result.status == "ERROR"
+        assert "Data load" in result.detail
+
+    def test_insufficient_bars_returns_skipped(self, tmp_path):
+        # Write a CSV with only 10 bars.
+        dates = pd.bdate_range("2020-01-01", periods=10)
+        df = pd.DataFrame({
+            "Date": dates,
+            "Open": range(10),
+            "High": range(10),
+            "Low": range(10),
+            "Close": range(10),
+            "Volume": range(10),
+        })
+        (tmp_path / "ES_continuous.csv").write_text(df.to_csv(index=False))
+
+        result = execute_b1_symbol("ES", tmp_path)
+        assert result.status == "SKIPPED"
+        assert "Insufficient" in result.detail
+
+    def test_synthetic_data_returns_executed(self, tmp_path):
+        """With enough bars, execute_b1_symbol completes without error."""
+        _make_ohlcv_csv(tmp_path, "ES", n_bars=200)
+        result = execute_b1_symbol("ES", tmp_path)
+
+        assert result.status == "EXECUTED"
+        assert result.trigger_count is not None
+        assert result.trade_count is not None
+        assert result.total_r is not None
+        assert result.win_rate is not None
+        assert result.trigger_count >= 0
+        assert result.trade_count >= 0
+
+    def test_metrics_are_numeric(self, tmp_path):
+        _make_ohlcv_csv(tmp_path, "CL", n_bars=300)
+        result = execute_b1_symbol("CL", tmp_path)
+
+        assert result.status == "EXECUTED"
+        assert isinstance(result.total_r, float)
+        assert isinstance(result.win_rate, float)
+        assert 0.0 <= result.win_rate <= 1.0
+
+    def test_detail_contains_summary(self, tmp_path):
+        _make_ohlcv_csv(tmp_path, "PL", n_bars=200)
+        result = execute_b1_symbol("PL", tmp_path)
+
+        assert result.status == "EXECUTED"
+        assert "triggers" in result.detail
+        assert "trades" in result.detail
+        assert "R=" in result.detail
+
+
+# ---------------------------------------------------------------------------
+# Tests: make_b1_executor
+# ---------------------------------------------------------------------------
+
+class TestMakeB1Executor:
+    def test_factory_returns_callable(self, tmp_path):
+        executor = make_b1_executor(data_dir=tmp_path)
+        assert callable(executor)
+
+    def test_factory_executor_runs(self, tmp_path):
+        _make_ohlcv_csv(tmp_path, "ES", n_bars=200)
+        executor = make_b1_executor(data_dir=tmp_path)
+        result = executor("ES")
+        assert result.status == "EXECUTED"
+        assert result.symbol == "ES"
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +414,24 @@ class TestSummarizeRun:
         assert len(summary.timestamp) == 15
         assert "_" in summary.timestamp
 
+    def test_summary_with_metrics_json_serializable(self):
+        """Summary including metric fields is JSON-safe."""
+        profile = _make_profile()
+        plan = build_run_plan(profile)
+        gate = _make_gate_pass()
+        sym_results = [
+            SymbolRunResult("ES", "EXECUTED", "done",
+                            trigger_count=10, trade_count=7,
+                            total_r=5.5, win_rate=0.71),
+        ]
+        summary = summarize_run(plan, gate, sym_results, timestamp="20260301_120000")
+        d = summary.to_dict()
+        serialized = json.dumps(d)
+        parsed = json.loads(serialized)
+        sr = parsed["symbol_run_results"][0]
+        assert sr["trigger_count"] == 10
+        assert sr["total_r"] == 5.5
+
 
 # ---------------------------------------------------------------------------
 # Tests: save_run_summary
@@ -288,47 +466,39 @@ class TestSaveRunSummary:
 
 
 # ---------------------------------------------------------------------------
-# Tests: SymbolRunResult
-# ---------------------------------------------------------------------------
-
-class TestSymbolRunResult:
-    def test_to_dict(self):
-        r = SymbolRunResult("ES", "EXECUTED", "ok")
-        d = r.to_dict()
-        assert d == {"symbol": "ES", "status": "EXECUTED", "detail": "ok"}
-
-    def test_default_detail_empty(self):
-        r = SymbolRunResult("CL", "DRY_RUN")
-        assert r.detail == ""
-
-
-# ---------------------------------------------------------------------------
 # Tests: gate-first enforcement (integration-style with mocks)
 # ---------------------------------------------------------------------------
 
 class TestGateFirstEnforcement:
     """Tests that the runner exits 2 on gate mismatch and proceeds on pass."""
 
-    def test_gate_pass_runner_proceeds(self, tmp_path):
-        """Gate passes -> plan is built and execution returns results."""
+    def test_gate_pass_runner_proceeds_with_b1_executor(self, tmp_path):
+        """Gate passes -> B1 executor runs and returns metrics."""
         profile_path = _write_profile_yaml(tmp_path)
         profile = load_operating_profile(profile_path)
         gate = _make_gate_pass()
 
+        # Write synthetic data for all gating symbols.
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        for sym in ["ES", "CL", "PL"]:
+            _make_ohlcv_csv(data_dir, sym, n_bars=200)
+
         plan = build_run_plan(profile, profile_path=str(profile_path))
-        results = execute_run_plan(plan, dry_run=False)
+        executor = make_b1_executor(data_dir=data_dir)
+        results = execute_run_plan(plan, executor=executor)
         summary = summarize_run(plan, gate, results, timestamp="20260301_120000")
 
         assert summary.gate_passed is True
         assert len(summary.symbol_run_results) == 3
+        for sr in summary.symbol_run_results:
+            assert sr["status"] == "EXECUTED"
 
     def test_gate_fail_produces_abort_summary(self):
         """Gate fails -> summary reflects failure, no execution occurs."""
         gate = _make_gate_fail()
         assert gate.passed is False
 
-        # In the real runner, we'd exit 2. Here we verify the gate_result
-        # correctly reflects the mismatch.
         d = gate.to_dict()
         cl_result = next(r for r in d["symbol_results"] if r["symbol"] == "CL")
         assert cl_result["passed"] is False
@@ -381,7 +551,14 @@ class TestGateFirstEnforcement:
         gate = _make_gate_pass()
 
         plan = build_run_plan(profile, profile_path=str(profile_path))
-        results = execute_run_plan(plan, dry_run=False)
+
+        # Mock executor that returns metrics.
+        def mock_b1(sym):
+            return SymbolRunResult(sym, "EXECUTED", f"{sym} done",
+                                   trigger_count=5, trade_count=3,
+                                   total_r=2.0, win_rate=0.67)
+
+        results = execute_run_plan(plan, executor=mock_b1)
         summary = summarize_run(plan, gate, results, timestamp="20260301_120000")
 
         d = summary.to_dict()
@@ -399,7 +576,32 @@ class TestGateFirstEnforcement:
         assert isinstance(d["gate_result"]["symbol_results"], list)
         assert isinstance(d["symbol_run_results"], list)
         for sr in d["symbol_run_results"]:
-            assert set(sr.keys()) == {"symbol", "status", "detail"}
+            # Core keys always present.
+            assert "symbol" in sr
+            assert "status" in sr
+            assert "detail" in sr
+            # Metric keys present when executor returned them.
+            assert "trigger_count" in sr
+            assert "trade_count" in sr
+            assert "total_r" in sr
 
         # Must be fully JSON-serializable.
         json.dumps(d)
+
+    def test_one_symbol_failure_others_still_run(self, tmp_path):
+        """Partial failure: one symbol errors, others complete."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        # Only write data for ES and PL, not CL.
+        _make_ohlcv_csv(data_dir, "ES", n_bars=200)
+        _make_ohlcv_csv(data_dir, "PL", n_bars=200)
+
+        profile = _make_profile()
+        plan = build_run_plan(profile)
+        executor = make_b1_executor(data_dir=data_dir)
+        results = execute_run_plan(plan, executor=executor)
+
+        statuses = {r.symbol: r.status for r in results}
+        assert statuses["ES"] == "EXECUTED"
+        assert statuses["CL"] == "ERROR"
+        assert statuses["PL"] == "EXECUTED"

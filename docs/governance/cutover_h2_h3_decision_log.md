@@ -568,6 +568,69 @@ python scripts/run_weekly_b1_portfolio.py --profile configs/cutover/operating_pr
 2. Add Slack/email notification hook on gate mismatch for production alerting.
 3. Integrate runner into scheduled cron/task for automated weekly execution.
 
+## Decision Entry - 2026-03-01 (H.9 Real B1 Strategy Execution Wiring)
+
+### Scope
+- Wire real B1 strategy execution into the gate-first portfolio runner.
+- Replace placeholder/no-op executor with actual B1 detection + simulation path.
+
+### Inputs
+- H.8 runner infrastructure complete: gate check, run plan, dry-run, JSON output, summary persistence.
+- Existing stable APIs:
+  - `b1_detector.run_b1_detection(df, symbol, timeframe)` → `List[B1Trigger]`
+  - `simulator.simulate_all(triggers, df, SimConfig)` → `List[TradeResult]`
+  - `parity_prep.load_and_validate(path, label)` → `(df, errors)`
+- Data path: `data/processed/databento/cutover_v1/continuous/{SYM}_continuous.csv`
+
+### Decision
+- Add `execute_b1_symbol(symbol, data_dir)` adapter in `run_orchestrator.py` that loads canonical OHLCV, runs B1 detection, simulates trades, and returns per-symbol metrics.
+- Add `make_b1_executor(data_dir)` factory returning a `SymbolExecutor` closure.
+- Extend `SymbolRunResult` with optional metric fields: `trigger_count`, `trade_count`, `total_r`, `win_rate` (None when not applicable — backward-compatible).
+- Runner script (`run_weekly_b1_portfolio.py`) wires `make_b1_executor()` as default when not `--dry-run`.
+- Failures in one symbol do not crash the portfolio run; errors are captured per-symbol.
+
+### Rationale
+- Reuses existing stable B1 detection and simulation APIs — no strategy logic changes.
+- Pluggable executor pattern preserved; mock executors still work for testing.
+- Per-symbol error isolation ensures partial data availability does not block the entire run.
+- Optional metric fields in `SymbolRunResult.to_dict()` maintain backward-compatible JSON shape.
+
+### Gate Impact
+- No threshold changes.
+- No strategy logic changes.
+- No changes to acceptance semantics.
+- Runner is now the canonical execution entrypoint for the cycle.
+
+### Known Limitations
+- Default executor uses `SimConfig()` (zero slippage). Instrument-specific slippage should be wired when production slippage values are calibrated.
+- Weekly/monthly HTF data not passed to B1 detector (MTFA flags will be None). HTF data integration is a future enhancement.
+- Run summary JSON includes metric fields only when execution occurs; dry-run and error results omit them.
+
+### Runbook (updated)
+
+```bash
+# Dry run (gate + plan only):
+python scripts/run_weekly_b1_portfolio.py --dry-run
+
+# Actual B1 execution (default):
+python scripts/run_weekly_b1_portfolio.py
+
+# JSON output:
+python scripts/run_weekly_b1_portfolio.py --json
+
+# Include non-gating symbols:
+python scripts/run_weekly_b1_portfolio.py --include-non-gating
+
+# Custom profile:
+python scripts/run_weekly_b1_portfolio.py --profile configs/cutover/operating_profile_v1.yaml
+```
+
+### Next Actions
+1. Calibrate per-instrument slippage values and wire into `SimConfig`.
+2. Add weekly/monthly HTF data loading for MTFA confluence flags.
+3. Add Slack/email notification hook on gate mismatch for production alerting.
+4. Integrate runner into scheduled cron/task for automated weekly execution.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:

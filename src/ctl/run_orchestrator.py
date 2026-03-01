@@ -1,10 +1,14 @@
-"""Run orchestrator — gate-first portfolio execution wiring (H.8).
+"""Run orchestrator — gate-first portfolio execution wiring (H.8/H.9).
 
 Provides typed dataclasses and pure functions for building, executing,
 and summarising a gated portfolio run.  The gate check re-derives
 acceptance from live diagnostics (reusing the same functions as
 ``scripts/check_operating_profile.py``) and must pass before any
 strategy execution proceeds.
+
+H.9 adds the real B1 strategy executor: for each symbol the orchestrator
+loads the canonical continuous series, runs B1 trigger detection, then
+simulates trades and returns per-symbol metrics.
 
 Usage
 -----
@@ -85,13 +89,26 @@ class SymbolRunResult:
     symbol: str
     status: str  # "EXECUTED", "SKIPPED", "ERROR", "DRY_RUN"
     detail: str = ""
+    trigger_count: Optional[int] = None
+    trade_count: Optional[int] = None
+    total_r: Optional[float] = None
+    win_rate: Optional[float] = None
 
     def to_dict(self) -> dict:
-        return {
+        d: dict = {
             "symbol": self.symbol,
             "status": self.status,
             "detail": self.detail,
         }
+        if self.trigger_count is not None:
+            d["trigger_count"] = self.trigger_count
+        if self.trade_count is not None:
+            d["trade_count"] = self.trade_count
+        if self.total_r is not None:
+            d["total_r"] = self.total_r
+        if self.win_rate is not None:
+            d["win_rate"] = self.win_rate
+        return d
 
 
 @dataclass
@@ -388,3 +405,93 @@ def save_run_summary(
         json.dump(summary.to_dict(), f, indent=2)
     logger.info("Run summary saved to %s", path)
     return path
+
+
+# ---------------------------------------------------------------------------
+# B1 strategy executor (H.9)
+# ---------------------------------------------------------------------------
+
+def execute_b1_symbol(
+    symbol: str,
+    data_dir: Path,
+    timeframe: str = "daily",
+) -> SymbolRunResult:
+    """Run B1 detection + simulation for one symbol.
+
+    Loads the canonical continuous series, runs trigger detection,
+    simulates trades, and returns aggregated metrics.
+
+    Parameters
+    ----------
+    symbol : str
+        Root symbol (e.g. ``"ES"``).
+    data_dir : Path
+        Directory containing ``{symbol}_continuous.csv``.
+    timeframe : str
+        Timeframe label passed to the detector.
+
+    Returns
+    -------
+    SymbolRunResult with trigger/trade metrics.
+    """
+    from ctl.b1_detector import run_b1_detection
+    from ctl.parity_prep import load_and_validate
+    from ctl.simulator import SimConfig, simulate_all
+
+    csv_path = data_dir / f"{symbol}_continuous.csv"
+    df, errors = load_and_validate(csv_path, f"B1 {symbol}")
+    if errors:
+        return SymbolRunResult(
+            symbol=symbol,
+            status="ERROR",
+            detail=f"Data load: {'; '.join(errors)}",
+        )
+
+    if len(df) < 50:
+        return SymbolRunResult(
+            symbol=symbol,
+            status="SKIPPED",
+            detail=f"Insufficient bars ({len(df)} < 50)",
+        )
+
+    triggers = run_b1_detection(df, symbol, timeframe)
+    confirmed = [t for t in triggers if t.confirmed]
+    results = simulate_all(confirmed, df, SimConfig())
+
+    trigger_count = len(confirmed)
+    trade_count = len(results)
+    r_values = [t.theoretical_r for t in results]
+    total_r = sum(r_values) if r_values else 0.0
+    win_rate = (sum(1 for r in r_values if r > 0) / trade_count) if trade_count else 0.0
+
+    return SymbolRunResult(
+        symbol=symbol,
+        status="EXECUTED",
+        detail=f"{trigger_count} triggers, {trade_count} trades, R={total_r:.2f}",
+        trigger_count=trigger_count,
+        trade_count=trade_count,
+        total_r=round(total_r, 4),
+        win_rate=round(win_rate, 4),
+    )
+
+
+def make_b1_executor(
+    data_dir: Path = DEFAULT_DB_CONTINUOUS_DIR,
+    timeframe: str = "daily",
+) -> SymbolExecutor:
+    """Factory that returns a B1 executor bound to a data directory.
+
+    Parameters
+    ----------
+    data_dir : Path
+        Directory containing ``{symbol}_continuous.csv`` files.
+    timeframe : str
+        Timeframe label passed to the detector.
+
+    Returns
+    -------
+    Callable[[str], SymbolRunResult]
+    """
+    def _executor(symbol: str) -> SymbolRunResult:
+        return execute_b1_symbol(symbol, data_dir, timeframe)
+    return _executor

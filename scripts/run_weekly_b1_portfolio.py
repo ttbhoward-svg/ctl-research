@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Gate-first weekly B1 portfolio runner (H.8).
+"""Gate-first weekly B1 portfolio runner (H.8/H.9).
 
 Enforces the operating-profile gate check before any strategy execution.
 If the gate fails (acceptance mismatch), the run aborts with exit code 2.
-If the gate passes, the runner executes the portfolio plan for all gating
-symbols (and optionally non-gating symbols like PA).
+If the gate passes, the runner executes B1 detection + simulation for all
+gating symbols (and optionally non-gating symbols like PA).
 
 Usage
 -----
@@ -32,6 +32,7 @@ from ctl.operating_profile import load_operating_profile  # noqa: E402
 from ctl.run_orchestrator import (  # noqa: E402
     build_run_plan,
     execute_run_plan,
+    make_b1_executor,
     run_profile_gate,
     save_run_summary,
     summarize_run,
@@ -134,7 +135,8 @@ def main() -> None:
     )
 
     # --- Step 3: Execute ---
-    symbol_results = execute_run_plan(plan, dry_run=args.dry_run)
+    executor = make_b1_executor() if not args.dry_run else None
+    symbol_results = execute_run_plan(plan, executor=executor, dry_run=args.dry_run)
 
     # --- Step 4: Summarize ---
     summary = summarize_run(plan, gate_result, symbol_results, dry_run=args.dry_run)
