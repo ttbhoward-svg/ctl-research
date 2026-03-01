@@ -32,6 +32,7 @@ import pandas as pd
 
 from ctl.b1_detector import B1Params, compute_indicators, detect_triggers
 from ctl.indicators import ema
+from ctl.normalization import AssetClass, NormalizationMode, normalize_ohlcv
 from ctl.simulator import SimConfig, TradeResult, simulate_all
 
 # ---------------------------------------------------------------------------
@@ -387,6 +388,10 @@ def run_parity_suite(
     ema_period: int = 10,
     max_divergence_pct: float = EMA_MAX_DIVERGENCE_PCT,
     r_threshold: float = R_DIFF_THRESHOLD,
+    primary_mode: NormalizationMode = "raw",
+    reference_mode: NormalizationMode = "raw",
+    primary_asset_class: Optional[AssetClass] = None,
+    reference_asset_class: Optional[AssetClass] = None,
 ) -> ParitySuiteResult:
     """Run all three parity checks for one symbol.
 
@@ -406,11 +411,31 @@ def run_parity_suite(
         EMA divergence threshold in percent.
     r_threshold : float
         R-multiple difference threshold.
+    primary_mode : NormalizationMode
+        Normalization mode for primary frame (default ``"raw"``).
+    reference_mode : NormalizationMode
+        Normalization mode for reference frame (default ``"raw"``).
+    primary_asset_class : AssetClass, optional
+        Asset class for primary frame.  Required if mode != ``"raw"``.
+    reference_asset_class : AssetClass, optional
+        Asset class for reference frame.  Required if mode != ``"raw"``.
 
     Returns
     -------
     ParitySuiteResult
     """
+    # Apply normalization when an asset class is specified.
+    if primary_asset_class is not None:
+        primary = normalize_ohlcv(
+            primary, asset_class=primary_asset_class,
+            mode=primary_mode, source="primary",
+        )
+    if reference_asset_class is not None:
+        reference = normalize_ohlcv(
+            reference, asset_class=reference_asset_class,
+            mode=reference_mode, source="reference",
+        )
+
     ema_result = check_ema_parity(
         primary, reference, ema_period, max_divergence_pct,
     )
@@ -439,6 +464,10 @@ def run_cutover_suite(
     timeframe: str = "daily",
     params: Optional[B1Params] = None,
     sim_config: Optional[SimConfig] = None,
+    primary_mode: NormalizationMode = "raw",
+    reference_mode: NormalizationMode = "raw",
+    primary_asset_class: Optional[AssetClass] = None,
+    reference_asset_class: Optional[AssetClass] = None,
 ) -> Dict[str, ParitySuiteResult]:
     """Run parity checks across multiple symbols.
 
@@ -450,6 +479,14 @@ def run_cutover_suite(
         ``{symbol: ohlcv_df}`` from the reference archive.
     symbols : list of str, optional
         Symbols to check. Defaults to intersection of both dicts.
+    primary_mode : NormalizationMode
+        Normalization mode for primary frames (default ``"raw"``).
+    reference_mode : NormalizationMode
+        Normalization mode for reference frames (default ``"raw"``).
+    primary_asset_class : AssetClass, optional
+        Asset class for primary frames.
+    reference_asset_class : AssetClass, optional
+        Asset class for reference frames.
 
     Returns
     -------
@@ -466,6 +503,10 @@ def run_cutover_suite(
             continue
         results[sym] = run_parity_suite(
             p, r, sym, timeframe, params, sim_config,
+            primary_mode=primary_mode,
+            reference_mode=reference_mode,
+            primary_asset_class=primary_asset_class,
+            reference_asset_class=reference_asset_class,
         )
     return results
 

@@ -84,6 +84,39 @@ Record data-cutover reconciliation decisions, rationale, and next-gate criteria 
 ### Next Required Engineering Action
 - Implement explicit normalization modes in code and rerun the parity matrix under declared modes before final cutover v1 lock.
 
+## Decision Entry — H.4 Normalization Modes
+
+### Scope
+- H.4: Explicit normalization modes for parity inputs (equities/ETFs).
+
+### Inputs
+- AAPL/XLE parity failures showed 305%+ EMA divergence caused by adjustment-basis mismatch.
+- Databento equities are unadjusted (raw); TradeStation provides split-adjusted; Norgate provides fully adjusted (splits + dividends).
+- Prior parity comparisons silently mixed adjustment bases.
+
+### Decision
+- Introduce `NormalizationMode` (`"raw"`, `"split_adjusted"`, `"total_return_adjusted"`) and `AssetClass` (`"futures"`, `"equity"`, `"etf"`) as explicit metadata on all parity inputs.
+- `normalize_ohlcv()` enforces mode/asset-class compatibility:
+  - Futures reject `split_adjusted` (roll adjustment handled separately).
+  - `split_adjusted` requires explicit `split_factor` column; fails loudly if absent.
+  - `total_return_adjusted` reserved (raises `NotImplementedError`).
+- Parity suite (`run_parity_suite`, `run_cutover_suite`) accepts optional normalization kwargs; defaults to `"raw"` with no asset class (backward-compatible pass-through).
+- Schema coercion (date column normalization, volume alias handling, canonical column ordering) applied uniformly.
+
+### Rationale
+- Silent basis mismatch was the root cause of equity/ETF parity failures.
+- Explicit declarations prevent recurrence and make comparison assumptions auditable.
+- Backward-compatible defaults preserve existing futures parity behavior.
+
+### Gate Impact
+- No gate criteria change. Normalization modes are infrastructure for correct comparisons, not threshold adjustments.
+- Equity/ETF parity results are now interpretable only when declared modes match.
+
+### Next Actions
+- Rerun AAPL/XLE parity under declared `raw` mode for both sources (baseline).
+- Evaluate split-factor availability for Databento equities.
+- Define equity/ETF parity gate criteria once normalization-aligned comparisons are available.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
