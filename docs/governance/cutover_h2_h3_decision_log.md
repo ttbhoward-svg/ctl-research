@@ -401,6 +401,33 @@ Key findings:
 2. Re-run portfolio acceptance on next cycle after additional ES/PL harmonization.
 3. Maintain PA as a separate non-gating enhancement track.
 
+## Decision Entry - 2026-03-01 (Equity Scope Clarification: AAPL/XLE)
+
+### Scope
+- Clarify handling of equity/ETF parity outcomes after H.4 normalization-mode rollout and overlap-enforced reruns.
+
+### Inputs
+- AAPL and XLE remain strict parity failures under explicit `raw` mode and overlap enforcement.
+- Failure pattern is consistent with adjustment-basis mismatch across providers, not a parity harness defect.
+
+### Decision
+- AAPL/XLE are designated **non-gating** for the current futures cutover cycle.
+- Equity/ETF parity remains an active, separate basis-alignment workstream.
+- Current cutover gate universe remains futures-only: **ES, CL, PL**.
+
+### Rationale
+- Equity basis alignment requires dedicated split/adjustment metadata handling and should not block futures readiness.
+- Governance already enforces explicit normalization metadata, preventing silent basis mixing in future evaluations.
+
+### Gate Impact
+- Portfolio recommendation for this cycle continues as **CONDITIONAL GO** for research/paper/live-sim progression based on futures track status.
+- Equity/ETF outcomes are tracked separately until basis alignment criteria are met.
+
+### Next Actions
+1. Define equity basis acceptance criteria for `raw` and `split_adjusted` tracks.
+2. Source/validate required split metadata for Databento equity alignment path.
+3. Re-run AAPL/XLE under finalized basis rules in a dedicated equity gate cycle.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
