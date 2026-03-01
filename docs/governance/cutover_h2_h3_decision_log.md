@@ -117,6 +117,44 @@ Record data-cutover reconciliation decisions, rationale, and next-gate criteria 
 - Evaluate split-factor availability for Databento equities.
 - Define equity/ETF parity gate criteria once normalization-aligned comparisons are available.
 
+## Decision Entry - 2026-03-01 (H.4 Execution Outcome)
+
+### Scope
+- Executed H.4 normalization-mode implementation and reran the cross-provider parity matrix.
+- Symbols tested: ES, CL, PL, AAPL, XLE (Databento vs Norgate).
+
+### Inputs
+- H.4 code integration complete (`NormalizationMode`, `AssetClass`, schema coercion).
+- Databento lowercase OHLC regression fixed and validated by tests.
+- Parity outputs saved to `data/processed/cutover_v1/parity_h4_final/`.
+- PL comparison corrected to use `PL_continuous.csv` (continuous), not a single outright contract.
+
+### Result Summary
+- ES: strict parity failed; partial functional alignment remains.
+- CL: strict parity failed; structural divergence persists.
+- PL: valid continuous-vs-continuous comparison now, strict parity failed.
+- AAPL/XLE: strict parity failed; large divergence consistent with adjustment-basis mismatch.
+
+### Decision
+- Maintain **STRICT NO-GO** for cross-provider exact parity acceptance.
+- Maintain **policy WATCH** for continued canonical-pipeline progression.
+- Confirm parity diagnostics are now technically reliable and interpretation-safe due to explicit normalization metadata.
+
+### Rationale
+- Remaining divergence is attributable to known provider basis and continuous-construction differences, not missing-data or schema ambiguity.
+- H.4 reduced interpretation risk and improved reproducibility; it did not change parity thresholds or strategy logic.
+
+### Gate Impact
+- No threshold changes.
+- No strategy logic changes.
+- External strict parity remains blocked; canonical development continues under documented WATCH governance.
+
+### Next Actions (H.5)
+1. Define canonical futures acceptance on L2/L3/L4 explainability metrics (not external exact price match).
+2. Add explicit equity/ETF basis pipelines (`raw` and `split_adjusted`) with declared source constraints.
+3. Add overlap-window enforcement utility for parity runs to eliminate coverage contamination.
+4. Rerun policy-gated matrix and issue updated NO-GO/WATCH/CONDITIONAL-GO decision.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
