@@ -51,6 +51,39 @@ Record data-cutover reconciliation decisions, rationale, and next-gate criteria 
 3. Define explicit cutover threshold for moving from policy WATCH to CONDITIONAL GO.
 4. Update this memo with a dated H.4 decision entry.
 
+## Decision Entry - 2026-03-01 (H.4 Validation Outcome)
+
+### Scope
+- H.4 cross-provider validation using Norgate exports as an additional external reference.
+
+### Decision
+- Databento canonical series remains the system-of-record for cutover v1.
+- TradeStation and Norgate remain external validation references, not production truth sources.
+
+### Why
+- Strict cross-provider parity is structurally limited by:
+  - futures continuous roll policy differences and path-dependent back-adjustment drift,
+  - session convention differences,
+  - equity/ETF adjustment-basis differences (raw vs adjusted).
+
+### Evidence Snapshot
+- ES: trigger parity aligns in validator comparisons; EMA/trade strict thresholds still fail.
+- CL: strict divergence persists, but H.3 policy status improved to WATCH under calibrated roll timing.
+- AAPL/XLE: large divergence indicates normalization-basis mismatch, not missing files.
+
+### Governance Rule (effective 2026-03-01)
+- Keep dual gates:
+  - `strict_status` for hard comparability diagnostics.
+  - `policy_status` for operational progression decisions.
+- Progression may continue under policy WATCH only when divergence is explainable and documented.
+
+### Source-of-Truth Rule
+- Futures (ES/CL/PL): canonical Databento continuous builder plus roll manifest.
+- Equities/ETFs (AAPL/XLE): parity interpretation requires explicit normalization mode metadata.
+
+### Next Required Engineering Action
+- Implement explicit normalization modes in code and rerun the parity matrix under declared modes before final cutover v1 lock.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
@@ -59,4 +92,3 @@ Record data-cutover reconciliation decisions, rationale, and next-gate criteria 
 - Rationale:
 - Gate impact:
 - Next actions:
-
