@@ -214,6 +214,41 @@ Record data-cutover reconciliation decisions, rationale, and next-gate criteria 
 3. ES: investigate drift contributors and attempt reduction below mean drift threshold.
 4. Re-run H.5 evaluator and issue updated gate decision.
 
+## Decision Entry - 2026-03-01 (H.6 CL Remediation Update)
+
+### Scope
+- Executed CL-focused H.6 remediation loop using calibrated policy variant and regenerated diagnostics artifacts under `data/processed/cutover_v1/diagnostics_h6/`.
+
+### Inputs
+- Best CL variant remained:
+  - `cd=2`, `eligible_months=all`, `roll_timing=next_session`, `convention=add`.
+- Regenerated CL diagnostics summary:
+  - L2 rows: `104`
+  - `PASS=35`, `WATCH=55`, `FAIL=14`
+  - `fail_frac=13.46%` (improved from prior `15.56%` gate breach)
+- Acceptance evaluator output:
+  - `decision=ACCEPT`
+  - `accepted=True`
+
+### Decision
+- Upgrade CL canonical acceptance status from **REJECT** to **ACCEPT** for the current H.6 snapshot.
+
+### Rationale
+- CL moved below hard fail-fraction threshold (`13.46% <= 15.00%`) while maintaining acceptable drift/gap characteristics from the calibrated run.
+- Prior rejection condition was marginal and has been resolved by calibrated roll-policy diagnostics regeneration.
+
+### Gate Impact
+- Symbol-level status update:
+  - ES = WATCH
+  - CL = ACCEPT
+  - PL = REJECT (unchanged)
+- Portfolio-level status remains **NO-GO** until PL and ES are remediated or otherwise dispositioned.
+
+### Next Actions
+1. Run PL remediation loop (coverage/paired-roll quality) and re-evaluate acceptance.
+2. Run ES drift-focused remediation to move WATCH toward ACCEPT.
+3. Recompute portfolio-level decision after PL/ES updates.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
