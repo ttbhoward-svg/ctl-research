@@ -306,6 +306,41 @@ Key findings:
 4. Rerun PL acceptance evaluator after rebuild and issue updated gate decision.
 5. Continue ES drift-focused remediation independently (not blocked by PL).
 
+## Decision Entry - 2026-03-01 (H.6 PL Data Blocker Resolved, Status Upgrade)
+
+### Scope
+- Resolved PL data-identity blocker by acquiring genuine Databento Platinum outrights and rebuilding PL continuous with month set aligned to TradeStation availability (`F`, `J`, `N`, `V`).
+
+### Inputs
+- Rebuilt PL continuous from true `PL` contracts:
+  - `PL_continuous.csv`: `2529` bars
+  - `PL_roll_manifest.json`: `33` rolls
+- PL diagnostics rerun:
+  - `diag.strict_status=FAIL`
+  - `diag.policy_status=WATCH`
+- Acceptance rerun:
+  - `decision=WATCH`
+  - Reasons:
+    - mean gap diff `1.6600 > 1.0000`
+    - mean drift `8.2821 > 5.0000`
+
+### Decision
+- Upgrade PL from **REJECT (BLOCKED)** to **WATCH**.
+- PL is no longer blocked by commodity identity; remaining deltas are calibration/normalization quality issues.
+
+### Gate Impact
+- Symbol-level status:
+  - ES = WATCH
+  - CL = ACCEPT
+  - PL = WATCH
+- Portfolio-level status remains **NO-GO** pending remediation to reduce remaining ES/PL drift/gap metrics.
+
+### Next Actions
+1. ES: drift-focused remediation to move WATCH -> ACCEPT.
+2. PL: targeted gap/drift tuning against TS settings-equivalent build to move WATCH -> ACCEPT.
+3. Add PA as separate symbol track (do not alias to PL), with dedicated TS reference exports and diagnostics.
+4. Re-run portfolio acceptance and issue updated gate decision.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
