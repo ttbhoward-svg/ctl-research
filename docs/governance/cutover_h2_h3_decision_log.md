@@ -631,6 +631,81 @@ python scripts/run_weekly_b1_portfolio.py --profile configs/cutover/operating_pr
 3. Add Slack/email notification hook on gate mismatch for production alerting.
 4. Integrate runner into scheduled cron/task for automated weekly execution.
 
+## Decision Entry - 2026-03-01 (H.10 Weekly Ops Automation)
+
+### Scope
+- Schedule-ready ops wrapper around gate-first B1 portfolio runner.
+- Configurable notification dispatch (stdout, webhook).
+- Retention-based cleanup of old summary and ops-log files.
+
+### Inputs
+- H.9 runner complete: real B1 execution with per-symbol metrics.
+- Need production-like weekly operations: one command, alerting, log hygiene.
+- No existing retention or notification infrastructure.
+
+### Decision
+- New script `scripts/run_weekly_ops.py` wraps the H.8/H.9 runner.
+- New module `src/ctl/ops_notifier.py` builds human-readable messages and dispatches to stdout or webhook.
+- Retention cleanup prunes `*.json` files older than `--retention-days` (default 45) in both `run_summaries/` and `ops_logs/`.
+- Webhook payload is `{"text": message}` — Slack-compatible.
+- Ops logs saved to `data/processed/cutover_v1/ops_logs/YYYYMMDD_HHMMSS_ops.json`.
+
+### Rationale
+- Single command for cron scheduling eliminates manual step coordination.
+- Notification dispatch surfaces gate mismatches and execution errors without manual log review.
+- Retention prevents unbounded artifact accumulation in long-running cycles.
+- Webhook failure does not crash the run — notification is best-effort.
+
+### Gate Impact
+- No threshold changes.
+- No strategy logic changes.
+- No changes to acceptance semantics.
+- H.9 runner interface preserved.
+
+### Runbook (updated)
+
+```bash
+# Gate check only (H.7):
+python scripts/check_operating_profile.py
+
+# B1 runner only (H.8/H.9):
+python scripts/run_weekly_b1_portfolio.py --dry-run
+
+# Full weekly ops (H.10):
+python scripts/run_weekly_ops.py --dry-run --notify stdout
+python scripts/run_weekly_ops.py --notify stdout
+python scripts/run_weekly_ops.py --json --notify none
+python scripts/run_weekly_ops.py --notify webhook --webhook-url https://hooks.slack.com/...
+
+# With custom retention:
+python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
+```
+
+**Cron examples:**
+```cron
+# Weekly dry-run check (Sunday 6:00 AM):
+0 6 * * 0 cd /path/to/ctl-research && .venv/bin/python scripts/run_weekly_ops.py --dry-run --notify stdout >> /var/log/ctl-ops.log 2>&1
+
+# Weekly real run (Monday 5:00 AM):
+0 5 * * 1 cd /path/to/ctl-research && .venv/bin/python scripts/run_weekly_ops.py --notify webhook >> /var/log/ctl-ops.log 2>&1
+```
+
+**Exit codes:**
+- `0` — gate passed, run completed
+- `2` — gate mismatch, run aborted
+- `1` — unrecoverable runner error
+
+**Notification modes:**
+- `none` — no notification (default)
+- `stdout` — print ops message to stdout
+- `webhook` — POST `{"text": message}` to `--webhook-url` (or `OPS_WEBHOOK_URL` env)
+
+### Next Actions
+1. Configure production webhook URL and test end-to-end notification flow.
+2. Calibrate per-instrument slippage values and wire into `SimConfig`.
+3. Add weekly/monthly HTF data loading for MTFA confluence flags.
+4. Set up systemd timer or cron job for automated weekly execution.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
