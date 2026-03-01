@@ -747,6 +747,40 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
 3. Calibrate per-instrument slippage values and wire into `SimConfig`.
 4. Add weekly/monthly HTF data loading for MTFA confluence flags.
 
+---
+
+## H.12 — Cutover Closeout + Scheduler Dry-Run Proof — 2026-03-01
+
+### Decision Entry — 2026-03-01
+
+- **Scope:** Formal cutover v1 closeout, scheduler-style dry-run proof, file inventory verification.
+- **Inputs:** Complete H.7–H.11 infrastructure (gate, runner, ops wrapper, notifications, runbook); full test suite (1191 passing).
+- **Decision:** Close cutover v1 cycle with CONDITIONAL GO recommendation. All gating symbols (ES/CL/PL) pass their expected statuses. First scheduler-equivalent dry-run proof executed and documented.
+- **Rationale:** The full operational stack — from locked YAML profile through gate check, B1 execution, ops logging, notification dispatch, and retention — is implemented, tested, and validated. A scheduler-style dry-run confirms end-to-end readiness without live execution.
+- **Gate impact:** None — closeout is documentation/verification only. Portfolio recommendation remains CONDITIONAL GO.
+- **Files:**
+  - `docs/governance/cutover_v1_closeout.md` — comprehensive closeout document
+  - `scripts/verify_cutover_closeout.py` — file inventory verification script
+  - `tests/unit/test_verify_cutover_closeout.py` — verification script tests
+
+### Dry-Run Proof Summary
+
+| Field | Value |
+|-------|-------|
+| Timestamp | `20260301_224932` |
+| Gate passed | `true` |
+| Exit code | `0` |
+| ES | WATCH (expected) = WATCH (actual) |
+| CL | ACCEPT (expected) = ACCEPT (actual) |
+| PL | WATCH (expected) = WATCH (actual) |
+| Recommendation | CONDITIONAL GO |
+
+### Next Actions
+1. Begin next cycle planning: ES and PL promotion targets.
+2. Deploy production webhook endpoint.
+3. Install cron/launchd scheduler per runbook.
+4. Calibrate per-instrument SimConfig slippage.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
