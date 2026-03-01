@@ -428,6 +428,45 @@ Key findings:
 2. Source/validate required split metadata for Databento equity alignment path.
 3. Re-run AAPL/XLE under finalized basis rules in a dedicated equity gate cycle.
 
+## Decision Entry - 2026-03-01 (Operational Day-Delta Tolerance Lock and Futures Status Board)
+
+### Scope
+- Finalized operational `max_day_delta` settings for current futures diagnostics cycle and refreshed acceptance status board.
+
+### Inputs
+- ES day-delta sweep showed stable WATCH status with zero fail matches at `max_day_delta>=3`; mean drift remained the only blocker.
+- CL day-delta sweep outcomes:
+  - `mdd=2`: `n_paired=90`, `n_fail=14`, acceptance `REJECT`
+  - `mdd=3`: `n_paired=94`, `n_fail=6`, acceptance `ACCEPT`
+  - `mdd>=4`: `ACCEPT` with marginal additional benefit
+- PL remains WATCH under current settings due to mean gap/drift criteria.
+
+### Decision
+- Lock operational day-delta tolerances for this cycle:
+  - `ES max_day_delta=3`
+  - `CL max_day_delta=3`
+  - `PL max_day_delta=2`
+
+### Futures Status Board (Current Cycle)
+- ES = WATCH
+- CL = ACCEPT
+- PL = WATCH
+- PA = research-enabled, non-gating
+
+### Portfolio Recommendation
+- Maintain **CONDITIONAL GO** for research/paper/live-sim progression this cycle.
+- Full GO deferred pending additional ES/PL drift-gap harmonization.
+
+### Rationale
+- `max_day_delta=3` materially improves CL pairing/fail outcomes without threshold changes.
+- ES and PL residual blockers are stable drift/gap effects rather than pairing instability.
+- Threshold policy remains unchanged; only operational pairing tolerance is set.
+
+### Next Actions
+1. ES: continue drift reduction workstream (target mean drift <= 5.0).
+2. PL: continue gap/drift reduction workstream (target mean gap <= 1.0 and mean drift <= 5.0).
+3. Re-run futures acceptance board at next cycle checkpoint.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
