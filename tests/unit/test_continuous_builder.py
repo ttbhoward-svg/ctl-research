@@ -1201,3 +1201,227 @@ class TestCalibrationHelper:
         ref = apply_panama_adjustment(contracts, active, rolls_ref, convention="subtract")
         result = calibrate_convention(contracts, order, ref)
         assert result.symbol == "ES"
+
+
+# ---------------------------------------------------------------------------
+# Helpers: non-overlapping contract chains
+# ---------------------------------------------------------------------------
+
+def _non_overlap_two_contract_setup(
+    front_start="2024-01-02",
+    front_n=30,
+    back_start="2024-03-01",
+    back_n=30,
+    front_base=100.0,
+    back_base=110.0,
+):
+    """Build two contracts with NO overlapping dates.
+
+    front ends around 2024-02-12 (30 bdays from 2024-01-02).
+    back starts 2024-03-01 — well after front ends.
+    """
+    front_df = _make_contract_df(
+        "PAH4", front_start, front_n,
+        base_price=front_base, base_volume=50000, trend=0.1,
+    )
+    back_df = _make_contract_df(
+        "PAM4", back_start, back_n,
+        base_price=back_base, base_volume=40000, trend=0.1,
+    )
+    contracts = {"PAH4": front_df, "PAM4": back_df}
+    order = parse_contracts(["PAH4", "PAM4"])
+    return contracts, order
+
+
+# ---------------------------------------------------------------------------
+# Tests: Non-overlap forced roll fallback
+# ---------------------------------------------------------------------------
+
+class TestNonOverlapFallback:
+    """Tests for the non-overlap forced roll fallback in detect_rolls."""
+
+    def test_two_contract_non_overlap_rolls(self):
+        """Two non-overlapping contracts should produce exactly one roll
+        via the forced fallback on the first bar of the second contract."""
+        contracts, order = _non_overlap_two_contract_setup()
+        rolls, active = detect_rolls(contracts, order, consecutive_days=2)
+        assert len(rolls) == 1
+        assert rolls[0].from_contract == "PAH4"
+        assert rolls[0].to_contract == "PAM4"
+
+    def test_fallback_roll_date_is_first_bar_of_next(self):
+        """The forced roll should happen on the first date where the next
+        contract has data and the current contract does not."""
+        contracts, order = _non_overlap_two_contract_setup()
+        rolls, active = detect_rolls(contracts, order)
+        assert len(rolls) == 1
+        # The roll date should equal the first bar of the back contract.
+        back_first_date = contracts["PAM4"]["date"].iloc[0]
+        assert rolls[0].date == back_first_date
+
+    def test_fallback_adjustment_uses_last_close(self):
+        """Adjustment should be to_close - from_close where from_close is
+        the last bar's close of the expiring contract."""
+        front_base = 100.0
+        back_base = 115.0
+        contracts, order = _non_overlap_two_contract_setup(
+            front_base=front_base, back_base=back_base,
+        )
+        rolls, _ = detect_rolls(contracts, order)
+        assert len(rolls) == 1
+        r = rolls[0]
+        # from_close should be the last close of front contract.
+        front_last_close = contracts["PAH4"]["close"].iloc[-1]
+        assert abs(r.from_close - front_last_close) < 1e-9
+        # to_close should be back contract's close on the roll date.
+        back_first_close = contracts["PAM4"]["close"].iloc[0]
+        assert abs(r.to_close - back_first_close) < 1e-9
+        # adjustment = to - from
+        assert abs(r.adjustment - (r.to_close - r.from_close)) < 1e-9
+
+    def test_fallback_active_series_covers_both_contracts(self):
+        """The active series should include bars from both contracts,
+        not just the first one."""
+        contracts, order = _non_overlap_two_contract_setup()
+        rolls, active = detect_rolls(contracts, order)
+        assert set(active["contract"].unique()) == {"PAH4", "PAM4"}
+        # Total bars = front_n + back_n (no overlap, no gaps within contracts).
+        assert len(active) == 30 + 30
+
+    def test_multi_contract_non_overlap_chain(self):
+        """Three non-overlapping contracts should produce two rolls,
+        continuing through the entire chain."""
+        c1 = _make_contract_df("PAH4", "2024-01-02", 20,
+                               base_price=100.0, base_volume=50000)
+        c2 = _make_contract_df("PAM4", "2024-02-15", 20,
+                               base_price=110.0, base_volume=40000)
+        c3 = _make_contract_df("PAU4", "2024-04-01", 20,
+                               base_price=120.0, base_volume=30000)
+        contracts = {"PAH4": c1, "PAM4": c2, "PAU4": c3}
+        order = parse_contracts(list(contracts.keys()))
+        rolls, active = detect_rolls(contracts, order)
+        assert len(rolls) == 2
+        assert rolls[0].from_contract == "PAH4"
+        assert rolls[0].to_contract == "PAM4"
+        assert rolls[1].from_contract == "PAM4"
+        assert rolls[1].to_contract == "PAU4"
+        # All three contracts appear in active series.
+        assert set(active["contract"].unique()) == {"PAH4", "PAM4", "PAU4"}
+        assert len(active) == 60  # 20 + 20 + 20
+
+    def test_multi_contract_non_overlap_adjustments_chain(self):
+        """Cumulative adjustments should accumulate across multiple
+        non-overlap rolls."""
+        c1 = _make_contract_df("PAH4", "2024-01-02", 20,
+                               base_price=100.0, base_volume=50000, trend=0.0)
+        c2 = _make_contract_df("PAM4", "2024-02-15", 20,
+                               base_price=110.0, base_volume=40000, trend=0.0)
+        c3 = _make_contract_df("PAU4", "2024-04-01", 20,
+                               base_price=125.0, base_volume=30000, trend=0.0)
+        contracts = {"PAH4": c1, "PAM4": c2, "PAU4": c3}
+        order = parse_contracts(list(contracts.keys()))
+        rolls, active = detect_rolls(contracts, order)
+        result = apply_panama_adjustment(contracts, active, rolls,
+                                         convention="subtract")
+        # Post-last-roll bars should have adjustment = 0.
+        last_roll_date = rolls[-1].date
+        post = result[result["Date"].dt.date >= last_roll_date]
+        assert (post["adjustment"] == 0.0).all()
+        # Pre-first-roll bars should have non-zero adjustment.
+        first_roll_date = rolls[0].date
+        pre = result[result["Date"].dt.date < first_roll_date]
+        assert (pre["adjustment"] != 0.0).all()
+
+    def test_existing_overlap_crossover_unchanged(self):
+        """Existing overlapping crossover behavior should not be
+        affected by the fallback logic."""
+        contracts, order = _two_contract_setup(
+            front_vol_start=50000,
+            back_vol_start=10000,
+            front_vol_trend=-3000,
+            back_vol_trend=5000,
+        )
+        rolls, active = detect_rolls(contracts, order, consecutive_days=2)
+        # With overlapping contracts the fallback should NOT trigger;
+        # standard volume crossover should produce exactly 1 roll.
+        assert len(rolls) == 1
+        assert rolls[0].from_contract == "ESM4"
+        assert rolls[0].to_contract == "ESU4"
+        # Both contracts should have had overlapping bars, so from_close
+        # should be the front contract's close on the crossover date, not
+        # a "last known" fallback value.
+        roll_date = rolls[0].date
+        front_close = contracts["ESM4"]
+        bar = front_close[front_close["date"] == roll_date]
+        assert not bar.empty, "Front contract should have bar on crossover date"
+        assert abs(rolls[0].from_close - bar.iloc[0]["close"]) < 1e-9
+
+    def test_fallback_next_session_timing(self):
+        """Non-overlap fallback should respect next_session roll timing:
+        the roll date should be deferred to the next trading day."""
+        contracts, order = _non_overlap_two_contract_setup()
+        rolls, active = detect_rolls(contracts, order, roll_timing="next_session")
+        assert len(rolls) == 1
+        # With next_session, roll date should be the SECOND bar of the
+        # back contract (deferred one session from detection).
+        back_second_date = contracts["PAM4"]["date"].iloc[1]
+        assert rolls[0].date == back_second_date
+
+    def test_fallback_same_day_timing(self):
+        """Non-overlap fallback with same_day timing: roll date equals
+        first bar of the next contract (immediate)."""
+        contracts, order = _non_overlap_two_contract_setup()
+        rolls, active = detect_rolls(contracts, order, roll_timing="same_day")
+        assert len(rolls) == 1
+        back_first_date = contracts["PAM4"]["date"].iloc[0]
+        assert rolls[0].date == back_first_date
+
+    def test_non_overlap_deterministic(self):
+        """Two identical runs should produce identical results."""
+        contracts, order = _non_overlap_two_contract_setup()
+        rolls1, active1 = detect_rolls(contracts, order)
+        rolls2, active2 = detect_rolls(contracts, order)
+        assert len(rolls1) == len(rolls2)
+        for r1, r2 in zip(rolls1, rolls2):
+            assert r1.date == r2.date
+            assert r1.from_contract == r2.from_contract
+            assert r1.to_contract == r2.to_contract
+            assert abs(r1.from_close - r2.from_close) < 1e-9
+            assert abs(r1.to_close - r2.to_close) < 1e-9
+            assert abs(r1.adjustment - r2.adjustment) < 1e-9
+        pd.testing.assert_frame_equal(active1, active2)
+
+    def test_non_overlap_panama_adjustment_deterministic(self):
+        """Full pipeline (detect + adjust) should be deterministic for
+        non-overlapping chains."""
+        contracts, order = _non_overlap_two_contract_setup()
+        rolls1, active1 = detect_rolls(contracts, order)
+        rolls2, active2 = detect_rolls(contracts, order)
+        r1 = apply_panama_adjustment(contracts, active1, rolls1, convention="add")
+        r2 = apply_panama_adjustment(contracts, active2, rolls2, convention="add")
+        pd.testing.assert_frame_equal(r1, r2)
+
+    def test_skip_dead_contract_between_live_ones(self):
+        """When a dead/illiquid contract sits between two live contracts
+        and all three exhaust their data at different times, the fallback
+        should skip the dead contract and roll directly to the next live
+        one."""
+        # Live contract A
+        c1 = _make_contract_df("PAH4", "2024-01-02", 40,
+                               base_price=100.0, base_volume=50000)
+        # Dead contract B — only 2 bars, ends well before A
+        c2 = _make_contract_df("PAJ4", "2024-01-15", 2,
+                               base_price=102.0, base_volume=1)
+        # Live contract C — starts after A ends
+        c3 = _make_contract_df("PAM4", "2024-03-05", 40,
+                               base_price=120.0, base_volume=40000)
+        contracts = {"PAH4": c1, "PAJ4": c2, "PAM4": c3}
+        order = parse_contracts(list(contracts.keys()))
+        rolls, active = detect_rolls(contracts, order)
+        # Should roll from PAH4 directly to PAM4, skipping dead PAJ4.
+        assert len(rolls) == 1
+        assert rolls[0].from_contract == "PAH4"
+        assert rolls[0].to_contract == "PAM4"
+        # Active series should contain bars from PAH4 and PAM4 only.
+        assert set(active["contract"].unique()) == {"PAH4", "PAM4"}
+        assert len(active) == 80  # 40 + 40

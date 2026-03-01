@@ -265,6 +265,10 @@ def detect_rolls(
     next_session = (roll_timing == "next_session")
     pending_switch_idx: Optional[int] = None
     pending_roll: Optional[RollEvent] = None
+    # Track last known close of the active contract for non-overlap
+    # fallback rolls where the active contract has no bar on the
+    # current date.
+    active_last_close: float = np.nan
 
     active_records: List[Dict] = []
 
@@ -274,45 +278,89 @@ def detect_rolls(
             pending_roll.date = d  # effective roll date = today
             rolls.append(pending_roll)
             active_idx = pending_switch_idx
+            active_last_close = np.nan
             pending_switch_idx = None
             pending_roll = None
 
         current_sym = contract_order[active_idx].symbol
         next_idx = active_idx + 1
 
+        # Update last known close for active contract.
+        if d in close_by_date.get(current_sym, {}):
+            active_last_close = close_by_date[current_sym][d]
+
         # Check if a roll should happen.
         if next_idx < len(contract_order):
             next_sym = contract_order[next_idx].symbol
-            cur_vol = vol_by_date.get(current_sym, {}).get(d, 0)
-            nxt_vol = vol_by_date.get(next_sym, {}).get(d, 0)
+            current_has_bar = d in vol_by_date.get(current_sym, {})
 
-            if nxt_vol > cur_vol and nxt_vol > 0:
-                crossover_count += 1
+            if not current_has_bar:
+                # --- Non-overlap forced roll fallback ---
+                # Active contract has no bar on this date.  Search
+                # forward through the chain for the first contract
+                # that does have a bar on d (skipping dead/illiquid
+                # contracts whose data has also ended).
+                target_idx: Optional[int] = None
+                for ci in range(next_idx, len(contract_order)):
+                    if d in vol_by_date.get(contract_order[ci].symbol, {}):
+                        target_idx = ci
+                        break
+
+                if target_idx is not None:
+                    target_sym = contract_order[target_idx].symbol
+                    nxt_close = close_by_date[target_sym][d]
+                    adj = 0.0
+                    if not (np.isnan(active_last_close) or np.isnan(nxt_close)):
+                        adj = nxt_close - active_last_close
+                    roll_evt = RollEvent(
+                        date=d,
+                        from_contract=current_sym,
+                        to_contract=target_sym,
+                        from_close=active_last_close,
+                        to_close=nxt_close,
+                        adjustment=adj,
+                    )
+                    if next_session:
+                        pending_roll = roll_evt
+                        pending_switch_idx = target_idx
+                    else:
+                        rolls.append(roll_evt)
+                        active_idx = target_idx
+                        active_last_close = nxt_close
+                    crossover_count = 0
             else:
-                crossover_count = 0
+                # --- Existing volume crossover logic ---
+                cur_vol = vol_by_date.get(current_sym, {}).get(d, 0)
+                nxt_vol = vol_by_date.get(next_sym, {}).get(d, 0)
 
-            if crossover_count >= consecutive_days:
-                # Roll!
-                cur_close = close_by_date.get(current_sym, {}).get(d, np.nan)
-                nxt_close = close_by_date.get(next_sym, {}).get(d, np.nan)
-                adj = 0.0
-                if not (np.isnan(cur_close) or np.isnan(nxt_close)):
-                    adj = nxt_close - cur_close
-                roll_evt = RollEvent(
-                    date=d,
-                    from_contract=current_sym,
-                    to_contract=next_sym,
-                    from_close=cur_close,
-                    to_close=nxt_close,
-                    adjustment=adj,
-                )
-                if next_session:
-                    pending_roll = roll_evt
-                    pending_switch_idx = next_idx
+                if nxt_vol > cur_vol and nxt_vol > 0:
+                    crossover_count += 1
                 else:
-                    rolls.append(roll_evt)
-                    active_idx = next_idx
-                crossover_count = 0
+                    crossover_count = 0
+
+                if crossover_count >= consecutive_days:
+                    # Roll!
+                    cur_close = close_by_date.get(current_sym, {}).get(d, np.nan)
+                    nxt_close = close_by_date.get(next_sym, {}).get(d, np.nan)
+                    adj = 0.0
+                    if not (np.isnan(cur_close) or np.isnan(nxt_close)):
+                        adj = nxt_close - cur_close
+                    roll_evt = RollEvent(
+                        date=d,
+                        from_contract=current_sym,
+                        to_contract=next_sym,
+                        from_close=cur_close,
+                        to_close=nxt_close,
+                        adjustment=adj,
+                    )
+                    if next_session:
+                        pending_roll = roll_evt
+                        pending_switch_idx = next_idx
+                    else:
+                        rolls.append(roll_evt)
+                        active_idx = next_idx
+                        active_last_close = nxt_close
+                    crossover_count = 0
 
         # Only record dates where the active contract has data.
         if d in vol_by_date.get(contract_order[active_idx].symbol, {}):
