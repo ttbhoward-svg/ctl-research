@@ -1783,6 +1783,85 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Set a default team run convention for thresholded research batches (e.g., `--min-confidence 0.50` for weekly automation).
   2. Expand registry with next cohort and review scorecard deltas after each batch.
 
+---
+
+## H.34 — ES Day-2 Drift Harmonization Checkpoint (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Execute planned Day-2 ES drift-focused diagnostics, test one harmonization candidate, and recompute acceptance/priority deltas.
+- **Inputs / Commands:**
+  - `scripts/evaluate_es_drift_harmonization.py`
+  - `scripts/evaluate_es_drift_walkforward.py`
+  - `scripts/evaluate_promotion_priority_with_es_candidate.py`
+- **Top ES drift contributors (L4):**
+  1. `2025-03-18 -> 2025-06-17` mean drift `18.3532` (contrib `7.7222%`)
+  2. `2020-03-16 -> 2020-06-15` mean drift `13.1032` (contrib `5.5133%`)
+  3. `2019-12-15 -> 2020-03-16` mean drift `10.1803` (contrib `4.1475%`)
+- **Candidate outcomes:**
+  - Offline regime-harmonized candidate:
+    - mean drift `7.3289 -> 6.1924` (delta `-1.1366`)
+    - mean gap unchanged at `0.5312`
+    - acceptance remains `WATCH` (`WATCH/WATCH`)
+  - Walk-forward candidates (`wf_1`, `wf_2`):
+    - both increased mean drift vs baseline
+    - best WF (`wf_2`) still worsened drift `7.3289 -> 7.7472` (delta `+0.4183`)
+- **Priority delta (with best WF candidate):**
+  - Baseline ES priority score: `0.2562`
+  - WF candidate ES priority score: `0.3022` (worse)
+  - PL remains top remediation priority.
+- **Decision:**
+  - Reject walk-forward ES harmonization candidate for promotion.
+  - Retain baseline ES settings for locked operating profile.
+  - Keep ES status at `WATCH`; no threshold or policy changes.
+- **Rationale:**
+  - Day-2 objective achieved: interval diagnostics complete and candidate tested.
+  - Candidate does not improve promotability and increases ES remediation priority.
+  - Baseline remains the most defensible configuration for current cycle lock.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Continue PL-first remediation in priority order.
+  2. Revisit ES only after PL movement or new data-quality evidence.
+
+---
+
+## H.35 — Integrated PL Harmonization Path for Priority Evaluation (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Integrate PL correction candidate into production-style priority evaluation path (optional mode), then recompute acceptance + promotion ranking.
+- **Inputs / Artifacts updated:**
+  - `src/ctl/pl_harmonization.py` (new reusable harmonization module)
+  - `scripts/evaluate_promotion_priority.py` (new flags: `--pl-harmonization`, `--pl-top-k`)
+  - `tests/unit/test_pl_harmonization.py` (new tests)
+- **Modes added:**
+  - `none`, `drift_only`, `gap_bias`, `combined`, `window_gap`, `window_combined`
+- **Verification:**
+  - `pytest tests/unit/test_pl_harmonization.py tests/unit/test_promotion_priority.py -q` → 12 passed.
+  - Baseline priority (`--json`):
+    - PL `WATCH`, mean gap `1.6600`, mean drift `8.2821`, score `0.5260`.
+  - Integrated `combined`:
+    - PL `WATCH`, mean gap `1.6533`, mean drift `5.6209`, score `0.2316`.
+  - Integrated `window_combined --pl-top-k 5`:
+    - PL `WATCH`, mean gap `0.9900`, mean drift `5.6209`, score `0.0683`.
+- **Decision:**
+  - Approve `window_combined` as the best current integrated PL harmonization candidate for evaluation workflows.
+  - Keep default mode as `none` (opt-in only) to avoid silent behavior change in existing automation.
+  - No promotion to `ACCEPT` yet; PL remains `WATCH` because mean drift is still above threshold (`5.6209 > 5.0000`).
+- **Rationale:**
+  - `window_combined` removes PL gap blocker while materially reducing drift and lowering priority urgency.
+  - Opt-in design preserves governance safety while enabling controlled experimentation.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Run PL drift-only refinement on top of `window_combined` candidate to target final `WATCH -> ACCEPT`.
+  2. If promoted, lock a new operating profile version and rerun gate scripts.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
