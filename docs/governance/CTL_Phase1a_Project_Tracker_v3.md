@@ -1,6 +1,10 @@
 # CTL Research Infrastructure — Phase 1a Project Tracker (v3.1)
 ## Updated Feb 18, 2026 — Data source migration: Databento primary, Norgate secondary, TradeStation archived tertiary
 
+> Canonical tracker reference as of 2026-03-02.
+> If this document conflicts with any older tracker variant, this file is authoritative.
+> Detours or non-critical side work must be logged in `docs/governance/detour_backlog.md`.
+
 ## Architecture: Python-First, API-Fed
 
 Signal detection, trade simulation, data pipeline, and regression all run in Python. Data sourced via API from Databento (primary) with Norgate (secondary reconciliation). TradeStation demoted to archived tertiary reference. IBKR for live execution (Phase 4+).

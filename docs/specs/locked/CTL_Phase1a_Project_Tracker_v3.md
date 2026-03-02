@@ -1,6 +1,10 @@
 # CTL Research Infrastructure — Phase 1a Project Tracker (v3)
 ## Updated Feb 17, 2026 — Integrated Codex Round 2 (Universe Lock, Dashboard, Statistical Additions)
 
+> Historical tracker snapshot.
+> Canonical active tracker is `docs/governance/CTL_Phase1a_Project_Tracker_v3.md`.
+> Keep this file for provenance only; do not use it as the operational source of truth.
+
 ## Architecture: Python-First
 
 Signal detection, trade simulation, data pipeline, and regression all run in Python. TradeStation is used for two things only: (1) exporting historical continuous futures OHLCV data, and (2) live order execution (Phase 4+).
