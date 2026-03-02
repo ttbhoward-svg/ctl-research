@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from ctl.research_registry import ResearchTickerRegistry
 from ctl.run_orchestrator import (
@@ -35,10 +35,11 @@ def run_research_batch(
     registry: ResearchTickerRegistry,
     data_dir: Path = DEFAULT_DB_CONTINUOUS_DIR,
     dry_run: bool = False,
+    symbols_override: Optional[List[str]] = None,
 ) -> ResearchBatchSummary:
     """Run B1 batch for enabled research symbols."""
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    symbols = registry.enabled_symbols()
+    symbols = list(symbols_override) if symbols_override is not None else registry.enabled_symbols()
     results: List[SymbolRunResult] = []
 
     for sym in symbols:

@@ -24,3 +24,20 @@ def test_run_research_batch_dry_run():
     assert out.dry_run is True
     assert out.symbols == ["PA", "XLE"]
     assert [r["status"] for r in out.symbol_results] == ["DRY_RUN", "DRY_RUN"]
+
+
+def test_run_research_batch_symbols_override():
+    reg = ResearchTickerRegistry(
+        cycle_id="cutover_v1",
+        registry_id="r1",
+        profile_path="configs/cutover/operating_profile_v1.yaml",
+        symbols=[
+            ResearchSymbol(symbol="PA", enabled=True),
+            ResearchSymbol(symbol="XLE", enabled=True),
+            ResearchSymbol(symbol="AAPL", enabled=True),
+        ],
+    )
+    out = run_research_batch(reg, dry_run=True, symbols_override=["AAPL"])
+    assert out.symbols == ["AAPL"]
+    assert len(out.symbol_results) == 1
+    assert out.symbol_results[0]["symbol"] == "AAPL"

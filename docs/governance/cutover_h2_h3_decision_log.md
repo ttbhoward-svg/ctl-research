@@ -1737,6 +1737,52 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Add next research cohort from Phase1a universe to registry and batch-run with scorecard review.
   2. Define explicit promotion criteria from scorecard (minimum execution sample + diagnostic stability windows).
 
+---
+
+## H.33 — Confidence-Gated Research Batch Execution (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Add an optional confidence threshold filter to research batch execution so recurring runs can automatically skip low-confidence symbols.
+- **Inputs / Artifacts updated:**
+  - `scripts/run_research_backtests_batch.py`:
+    - new `--min-confidence` argument (`0..1`)
+    - pre-run symbol filtering from latest scorecard input
+    - JSON output now includes `confidence_filter_applied`, `selected_symbols`, `skipped_symbols`
+  - `src/ctl/research_batch.py`:
+    - `symbols_override` support for explicit symbol subsets
+  - `tests/unit/test_research_batch.py`:
+    - added override behavior test
+- **Behavior:**
+  - If `--min-confidence` is omitted: unchanged behavior (all enabled symbols run).
+  - If provided and scorecard input exists:
+    - only symbols with `confidence_score >= threshold` are executed,
+    - others are explicitly listed in `skipped_symbols`.
+  - If no scorecard input exists: runner falls back to all enabled symbols.
+- **Verification:**
+  - Targeted tests:
+    - `tests/unit/test_research_batch.py`
+    - `tests/unit/test_research_scorecard.py`
+    - `tests/unit/test_research_registry.py`
+    - Result: 7 passed
+  - CLI smoke:
+    - `run_research_backtests_batch.py --dry-run --min-confidence 0.50 --json`
+    - Result: filter applied; selected `AAPL`; skipped `PA`, `XLE`.
+  - Full suite: `pytest tests/ -q` → 1253 passed.
+- **Decision:**
+  - Approve confidence-gated execution as an optional control for recurring research runs.
+  - Keep default behavior permissive to preserve exploratory flexibility.
+- **Rationale:**
+  - Enables faster, cleaner loops on symbols with stronger near-term evidence while preserving full-universe experimentation on demand.
+  - Makes research run selection explicit and auditable in JSON artifacts.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Set a default team run convention for thresholded research batches (e.g., `--min-confidence 0.50` for weekly automation).
+  2. Expand registry with next cohort and review scorecard deltas after each batch.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
