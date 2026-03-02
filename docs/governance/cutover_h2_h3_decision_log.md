@@ -1246,6 +1246,60 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Design and evaluate an offline PL gap-treatment candidate (L3-oriented) compatible with regime-aware drift correction.
   2. Re-run H.17 ranking only after combined candidate materially improves both gap and drift.
 
+---
+
+## H.24 — Offline PL Combined Correction (Drift + Gap) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Evaluate combined offline PL correction candidate:
+  - regime-aware drift correction (H.23), plus
+  - signed gap-bias correction (L3-oriented).
+- **Inputs:**
+  - New gap correction artifacts:
+    - `src/ctl/pl_gap_correction.py`
+    - `scripts/evaluate_pl_combined_correction.py`
+    - `tests/unit/test_pl_gap_correction.py`
+  - Regime offsets from H.22/H.23.
+  - Gap bias estimated from baseline PL L2 matched/watch rows.
+- **Method (offline only):**
+  - Estimate signed gap bias from L2 rows:
+    - median signed gap delta (`canonical_gap - ts_gap`) = `+0.3500` (n=30)
+  - Apply gap correction to manifest:
+    - `gap_corrected = gap - 0.3500`
+  - Evaluate four states:
+    1. baseline
+    2. drift-only correction
+    3. gap-only correction
+    4. combined correction
+- **Results:**
+  - Baseline: `gap=1.6600`, `drift=8.2821`, decision `WATCH`
+  - Drift-only: `gap=1.6600`, `drift=5.6209`, decision `WATCH`
+  - Gap-only: `gap=1.6533`, `drift=8.2821`, decision `WATCH`
+  - Combined: `gap=1.6533`, `drift=5.6209`, decision `WATCH`
+  - Combined delta vs baseline:
+    - `mean_gap_diff = -0.0067`
+    - `mean_drift = -2.6613`
+- **Decision:**
+  - Combined candidate remains insufficient for PL promotion under current thresholds.
+  - Keep prototype research-only; do not modify production series/profile.
+  - Prioritize targeted (non-uniform) gap treatment candidate next; uniform signed-bias correction has negligible L3 impact.
+- **Rationale:**
+  - Drift response is meaningful and consistent with H.23.
+  - Gap response is minimal, so L3 blocker remains essentially unchanged.
+  - Promotion requires material movement in both soft blockers.
+- **Verification:**
+  - `tests/unit/test_pl_gap_correction.py` → 3 passed
+  - Combined evaluator outputs validated in text + JSON.
+  - Full suite: `pytest tests/ -q` → 1231 passed.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Design targeted PL gap treatment (e.g., interval/contract-class-aware correction) and evaluate offline.
+  2. Re-run H.17 ranking only after targeted gap candidate shows material L3 improvement.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
