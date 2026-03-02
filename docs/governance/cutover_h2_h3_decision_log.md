@@ -2034,6 +2034,45 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Wire real COT/VIX source files into scheduled dataset build (full symbol universe).
   2. Run full-universe immutable dataset build and snapshot hash in governance closeout artifact.
 
+---
+
+## H.40 — Tuning Freeze + Baseline Forward Path — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Final parity/harmonization sweep for ES and PL after strict full-universe dataset pass; decide whether to promote symbol statuses or freeze current operating profile.
+- **Inputs:**
+  - Strict full-universe build succeeded:
+    - `data/processed/cutover_v1/datasets/phase1a_triggers_v1_full_universe_real_20260302.csv`
+    - `symbols_requested=29`, `warnings=[]`, `health_all_passed=true`.
+  - ES harmonization diagnostics:
+    - baseline `mean_drift=7.3289`
+    - best harmonized `mean_drift=6.1924` (still > 5.0)
+    - walkforward candidates degraded global drift vs baseline.
+  - PL harmonization diagnostics:
+    - baseline `mean_gap_diff=1.6600`, `mean_drift=8.2821`
+    - best (`window_combined`, `top_k=5`) `mean_gap_diff=0.9900`, `mean_drift=5.6209`
+    - status remains `WATCH` (drift still above threshold).
+- **Decision:**
+  - Freeze parity tuning for this cycle (no further ES/PL parameter tuning now).
+  - Keep operating profile unchanged:
+    - `ES = WATCH`
+    - `CL = ACCEPT`
+    - `PL = WATCH`
+  - Continue strict-path daily/weekly feature/model expansion using current locked baseline.
+- **Rationale:**
+  - ES improvements were insufficient for `ACCEPT` and walkforward offsets were non-robust.
+  - PL showed material improvement but still missed drift threshold.
+  - Additional tuning has diminishing returns versus progressing core spec deliverables.
+- **Gate impact:**
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+  - Research confidence filter remains active for non-gating research symbols.
+  - No threshold changes, no strategy-logic changes, no acceptance-semantic changes.
+- **Next actions:**
+  1. Proceed with daily/weekly feature expansion and ablation on frozen baseline.
+  2. Run unfiltered + filtered research batch snapshots for comparison.
+  3. Revisit ES/PL promotion only after new feature evidence justifies another parity tuning loop.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
