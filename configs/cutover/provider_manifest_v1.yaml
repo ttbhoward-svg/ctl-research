@@ -1,0 +1,34 @@
+cycle_id: cutover_v1
+version: provider_manifest_v1
+
+symbols:
+  "/CL": { primary: databento, fallback: tradestation, reference: norgate, notes: "Gating futures" }
+  "/ES": { primary: databento, fallback: tradestation, reference: norgate, notes: "Gating futures" }
+  "/GC": { primary: databento, fallback: tradestation, reference: none }
+  "/HG": { primary: databento, fallback: tradestation, reference: none }
+  "/NG": { primary: databento, fallback: tradestation, reference: none }
+  "/NQ": { primary: databento, fallback: tradestation, reference: none }
+  "/PA": { primary: databento, fallback: tradestation, reference: none, notes: "Research only for now" }
+  "/PL": { primary: databento, fallback: tradestation, reference: norgate, notes: "Gating futures WATCH" }
+  "/RTY": { primary: databento, fallback: tradestation, reference: none }
+  "/SI": { primary: databento, fallback: tradestation, reference: none }
+  "/YM": { primary: databento, fallback: tradestation, reference: none }
+  "/ZB": { primary: databento, fallback: tradestation, reference: none }
+  "/ZC": { primary: databento, fallback: tradestation, reference: none }
+  "/ZN": { primary: databento, fallback: tradestation, reference: none }
+  "/ZS": { primary: databento, fallback: tradestation, reference: none }
+
+  "CAT": { primary: yfinance, fallback: tradestation, reference: none }
+  "FCX": { primary: yfinance, fallback: tradestation, reference: none }
+  "GDX": { primary: yfinance, fallback: tradestation, reference: none }
+  "GS": { primary: yfinance, fallback: tradestation, reference: none }
+  "MU": { primary: yfinance, fallback: tradestation, reference: none }
+  "NEM": { primary: yfinance, fallback: tradestation, reference: none }
+  "SBSW": { primary: yfinance, fallback: none, reference: none }
+  "XLE": { primary: yfinance, fallback: tradestation, reference: norgate }
+  "XLF": { primary: yfinance, fallback: tradestation, reference: none }
+  "XLI": { primary: yfinance, fallback: tradestation, reference: none }
+  "XLK": { primary: yfinance, fallback: tradestation, reference: none }
+  "XLY": { primary: yfinance, fallback: tradestation, reference: none }
+  "XME": { primary: yfinance, fallback: tradestation, reference: none }
+  "XOM": { primary: yfinance, fallback: tradestation, reference: none }
