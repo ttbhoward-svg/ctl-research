@@ -939,6 +939,43 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Use MTFA audit metrics to inform Day 4+ analysis/prioritization for ES/PL promotion.
   2. Keep PA/equity tracks non-gating until basis and drift workstreams are closed.
 
+---
+
+## H.17 — ES/PL Promotion-Priority Diagnostic (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Add a repeatable diagnostic that ranks ES/PL promotion urgency using current acceptance blockers plus MTFA audit rates from latest run summaries.
+- **Inputs:**
+  - Operating profile v1 (locked symbol settings)
+  - Live L2/L3/L4 diagnostics + canonical acceptance evaluation
+  - Latest run summary MTFA rates (`mtfa_weekly_rate`, `mtfa_monthly_rate`)
+- **Decision:**
+  - Add `src/ctl/promotion_priority.py` with:
+    - latest run-summary loader
+    - MTFA extraction helpers
+    - comparable per-symbol priority row builder
+    - ranking utility
+  - Add `scripts/evaluate_promotion_priority.py` to produce text or JSON ranking.
+  - Keep scoring heuristic explicit and lightweight (drift/gap weighted, fail/unmatched secondary).
+- **Verification:**
+  - Unit tests: `tests/unit/test_promotion_priority.py` → 8 passed
+  - Runtime script:
+    - text output ranks `PL` above `ES` for promotion urgency
+    - JSON output includes blocker metrics + MTFA rates
+  - Full suite: `pytest tests/ -q` → 1213 passed
+- **Current diagnostic output (ES/PL):**
+  - `PL`: score `0.5260` (MEDIUM), blockers: mean gap `1.66`, mean drift `8.2821`, MTFA weekly/monthly `0.50/0.25`
+  - `ES`: score `0.2562` (MEDIUM), blocker: mean drift `7.3289`, MTFA weekly/monthly `0.00/0.00`
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - No acceptance framework changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Start PL-first promotion workstream (gap+drift), then ES drift-only workstream.
+  2. Re-run this ranking after each harmonization cycle and append delta entries.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
