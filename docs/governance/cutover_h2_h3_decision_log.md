@@ -2073,6 +2073,50 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   2. Run unfiltered + filtered research batch snapshots for comparison.
   3. Revisit ES/PL promotion only after new feature evidence justifies another parity tuning loop.
 
+---
+
+## H.41 — Provider Manifest Promotion: Databento-Primary Restored — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Promote previously TS-primary futures back to Databento primary after manual Databento outright pulls + continuous rebuild; validate readiness and downstream research behavior.
+- **Inputs:**
+  - Databento outrights fetched and filtered to outright-only contracts for:
+    - `/GC`, `/HG`, `/NG`, `/NQ`, `/RTY`, `/SI`, `/YM`, `/ZB`, `/ZC`, `/ZN`, `/ZS`.
+  - Continuous files rebuilt to:
+    - `data/processed/databento/cutover_v1/continuous/`.
+  - Provider manifest updated:
+    - `configs/cutover/provider_manifest_v1.yaml`.
+- **Verification:**
+  - `scripts/check_provider_manifest.py --json`:
+    - `symbols_total=29`
+    - `primary_available=29`
+    - `primary_missing=0`
+    - no validation errors.
+  - `scripts/run_phase1a_strict_build.py`:
+    - `warnings=[]`
+    - `health_all_passed=true`
+    - rows/trades/triggers: `257`
+    - dataset hash: `c9174b8555ec998568538d7469be91dc92e9abcde4eb6c917c396a7e1a43b1c5`.
+  - Post-promotion research run (`--min-confidence 0.60`):
+    - selected symbols: `ES`, `CL`, `PL`, `AAPL`.
+    - key output remained stable (`CL`/`AAPL` strong; `ES`/`PL` WATCH).
+- **Decision:**
+  - Approve Databento-primary restoration for all futures in the 29-symbol universe.
+  - Keep current operating profile statuses unchanged:
+    - `ES=WATCH`, `CL=ACCEPT`, `PL=WATCH`.
+- **Rationale:**
+  - Manifest readiness is complete and strict build integrity remained PASS after promotion.
+  - Promotion aligns architecture with Databento-first target while preserving governance gates.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy-logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Continue daily/weekly feature expansion and ablation on this Databento-primary baseline.
+  2. Keep TS/Norgate as reference/fallback audit sources only.
+  3. Rotate Databento API key after historical pull completion (security hygiene).
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
