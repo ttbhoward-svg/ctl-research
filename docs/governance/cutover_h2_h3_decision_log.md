@@ -1300,6 +1300,62 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Design targeted PL gap treatment (e.g., interval/contract-class-aware correction) and evaluate offline.
   2. Re-run H.17 ranking only after targeted gap candidate shows material L3 improvement.
 
+---
+
+## H.25 — Offline PL Segment-Based Gap Treatment (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Evaluate a non-uniform PL gap-treatment candidate using segment-specific signed gap bias (time-regime aware), and measure standalone + combined impact with drift correction.
+- **Inputs:**
+  - New segment gap correction artifacts:
+    - `src/ctl/pl_gap_segment_correction.py`
+    - `scripts/evaluate_pl_segment_gap_correction.py`
+    - `tests/unit/test_pl_gap_segment_correction.py`
+  - Segment windows:
+    - `pre_2020` (`2018-01-01..2019-12-31`)
+    - `mid_2020_2023` (`2020-01-01..2023-12-31`)
+    - `post_2024` (`2024-01-01..2026-12-31`)
+  - Existing drift-regime correction candidate from H.23.
+- **Segment gap-bias estimates (median signed `canonical_gap - ts_gap`):**
+  - `pre_2020`: `+0.4500` (n=8)
+  - `mid_2020_2023`: `+0.8000` (n=15)
+  - `post_2024`: `-0.9000` (n=7)
+- **Results:**
+  - Baseline:
+    - `mean_gap_diff=1.6600`
+    - `mean_drift=8.2821`
+    - decision `WATCH`
+  - Segment-gap-only:
+    - `mean_gap_diff=1.5433`
+    - `mean_drift=8.2821`
+    - decision `WATCH`
+  - Combined (segment-gap + drift-regime correction):
+    - `mean_gap_diff=1.5433`
+    - `mean_drift=5.6209`
+    - decision `WATCH`
+  - Deltas vs baseline:
+    - segment-gap-only: `gap -0.1167`, `drift +0.0000`
+    - combined: `gap -0.1167`, `drift -2.6613`
+- **Decision:**
+  - Segment-based gap treatment outperforms uniform gap bias correction on L3 but still does not clear policy thresholds.
+  - Keep research-only; no production/profile changes.
+  - Continue with targeted high-impact gap components (contract/roll-window specific) rather than broad medians.
+- **Rationale:**
+  - Non-uniform correction aligns better with observed regime-specific signed gap behavior.
+  - Remaining distance to threshold (`1.5433 > 1.0000`) is too large for promotion.
+- **Verification:**
+  - `tests/unit/test_pl_gap_segment_correction.py` → 2 passed
+  - Script outputs validated in text + JSON modes.
+  - Full suite: `pytest tests/ -q` → 1233 passed.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Isolate top PL gap-error roll windows and test roll-window-specific corrections offline.
+  2. Re-run H.17 ranking only after a candidate materially reduces both gap and drift.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
