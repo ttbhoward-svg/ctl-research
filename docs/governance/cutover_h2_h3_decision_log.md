@@ -976,6 +976,45 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Start PL-first promotion workstream (gap+drift), then ES drift-only workstream.
   2. Re-run this ranking after each harmonization cycle and append delta entries.
 
+---
+
+## H.18 — PL-First Harmonization Sweep (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Execute PL-first harmonization sweep across roll-policy variants (consecutive days, month universe, roll timing, pairing tolerance) and compare against current locked PL baseline.
+- **Inputs:**
+  - Raw Databento PL outrights: `data/raw/databento/cutover_v1/outrights_only/PL/`
+  - TS PL custom references: `data/raw/tradestation/cutover_v1/`
+  - Candidate dimensions:
+    - `consecutive_days`: 1/2/3
+    - `eligible_months`: `all` vs `FJNV`
+    - `roll_timing`: `same_day` vs `next_session`
+    - `max_day_delta`: 2/3/4/5
+- **Current locked baseline (processed PL series):**
+  - `max_day_delta=2` => decision `WATCH`
+  - metrics: `n_paired=30`, `n_fail=4`, `mean_gap_diff=1.6600`, `mean_drift=8.2821`
+- **Sweep result summary:**
+  - No tested rebuild variant achieved `WATCH` or `ACCEPT`; top variants remained `REJECT`.
+  - Best rebuild candidate by soft-blocker score:
+    - `cd=2`, `months=FJNV`, `timing=same_day`, `mdd=3`
+    - decision `REJECT`, metrics `n_paired=29`, `n_fail=6`, `mean_gap_diff=1.5345`, `mean_drift=8.2821`
+  - Rebuild variants with `months=all` were materially worse (large fail counts and much higher drift/gap).
+- **Decision:**
+  - Keep current locked PL canonical build/settings unchanged for this cycle (`WATCH`).
+  - Do not promote PL to `ACCEPT` based on current no-threshold-change harmonization space.
+  - Continue with promotion-priority workflow and monitor for data-basis improvements rather than forcing policy changes.
+- **Rationale:**
+  - The current locked PL series is still superior to tested rebuild alternatives under the policy gate.
+  - Remaining blockers are soft thresholds (`mean_gap`, `mean_drift`) not solved by tested roll-policy permutations.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Keep PL in `WATCH` and prioritize targeted gap/drift diagnostics over broad policy sweeps.
+  2. Continue ES drift-focused workstream in parallel and rerun H.17 ranking after each checkpoint.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
