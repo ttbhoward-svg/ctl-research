@@ -95,6 +95,12 @@ class SymbolRunResult:
     trade_count: Optional[int] = None
     total_r: Optional[float] = None
     win_rate: Optional[float] = None
+    mtfa_weekly_count: Optional[int] = None
+    mtfa_weekly_true: Optional[int] = None
+    mtfa_weekly_rate: Optional[float] = None
+    mtfa_monthly_count: Optional[int] = None
+    mtfa_monthly_true: Optional[int] = None
+    mtfa_monthly_rate: Optional[float] = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -110,6 +116,18 @@ class SymbolRunResult:
             d["total_r"] = self.total_r
         if self.win_rate is not None:
             d["win_rate"] = self.win_rate
+        if self.mtfa_weekly_count is not None:
+            d["mtfa_weekly_count"] = self.mtfa_weekly_count
+        if self.mtfa_weekly_true is not None:
+            d["mtfa_weekly_true"] = self.mtfa_weekly_true
+        if self.mtfa_weekly_rate is not None:
+            d["mtfa_weekly_rate"] = self.mtfa_weekly_rate
+        if self.mtfa_monthly_count is not None:
+            d["mtfa_monthly_count"] = self.mtfa_monthly_count
+        if self.mtfa_monthly_true is not None:
+            d["mtfa_monthly_true"] = self.mtfa_monthly_true
+        if self.mtfa_monthly_rate is not None:
+            d["mtfa_monthly_rate"] = self.mtfa_monthly_rate
         return d
 
 
@@ -510,6 +528,14 @@ def execute_b1_symbol(
         monthly_df=monthly_df,
     )
     confirmed = [t for t in triggers if t.confirmed]
+    weekly_vals = [t.weekly_trend_aligned for t in confirmed if t.weekly_trend_aligned is not None]
+    monthly_vals = [t.monthly_trend_aligned for t in confirmed if t.monthly_trend_aligned is not None]
+    weekly_count = len(weekly_vals)
+    monthly_count = len(monthly_vals)
+    weekly_true = sum(1 for v in weekly_vals if v)
+    monthly_true = sum(1 for v in monthly_vals if v)
+    weekly_rate = (weekly_true / weekly_count) if weekly_count else None
+    monthly_rate = (monthly_true / monthly_count) if monthly_count else None
     results = simulate_all(
         confirmed,
         df,
@@ -530,6 +556,12 @@ def execute_b1_symbol(
         trade_count=trade_count,
         total_r=round(total_r, 4),
         win_rate=round(win_rate, 4),
+        mtfa_weekly_count=weekly_count,
+        mtfa_weekly_true=weekly_true,
+        mtfa_weekly_rate=(round(weekly_rate, 4) if weekly_rate is not None else None),
+        mtfa_monthly_count=monthly_count,
+        mtfa_monthly_true=monthly_true,
+        mtfa_monthly_rate=(round(monthly_rate, 4) if monthly_rate is not None else None),
     )
 
 

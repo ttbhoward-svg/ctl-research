@@ -2,6 +2,7 @@
 
 import json
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -262,12 +263,22 @@ class TestSymbolRunResult:
     def test_to_dict_with_metrics(self):
         r = SymbolRunResult("ES", "EXECUTED", "done",
                             trigger_count=10, trade_count=7,
-                            total_r=5.5, win_rate=0.71)
+                            total_r=5.5, win_rate=0.71,
+                            mtfa_weekly_count=10, mtfa_weekly_true=7,
+                            mtfa_weekly_rate=0.7,
+                            mtfa_monthly_count=10, mtfa_monthly_true=6,
+                            mtfa_monthly_rate=0.6)
         d = r.to_dict()
         assert d["trigger_count"] == 10
         assert d["trade_count"] == 7
         assert d["total_r"] == 5.5
         assert d["win_rate"] == 0.71
+        assert d["mtfa_weekly_count"] == 10
+        assert d["mtfa_weekly_true"] == 7
+        assert d["mtfa_weekly_rate"] == 0.7
+        assert d["mtfa_monthly_count"] == 10
+        assert d["mtfa_monthly_true"] == 6
+        assert d["mtfa_monthly_rate"] == 0.6
 
     def test_to_dict_omits_none_metrics(self):
         """Backward-compatible: no metric keys when None."""
@@ -277,6 +288,12 @@ class TestSymbolRunResult:
         assert "trade_count" not in d
         assert "total_r" not in d
         assert "win_rate" not in d
+        assert "mtfa_weekly_count" not in d
+        assert "mtfa_weekly_true" not in d
+        assert "mtfa_weekly_rate" not in d
+        assert "mtfa_monthly_count" not in d
+        assert "mtfa_monthly_true" not in d
+        assert "mtfa_monthly_rate" not in d
 
     def test_to_dict_backward_compatible_keys(self):
         """Core keys always present regardless of metrics."""
@@ -366,6 +383,44 @@ class TestExecuteB1Symbol:
         assert set(monthly_df.columns) == {"Date", "Open", "High", "Low", "Close", "Volume"}
         assert len(weekly_df) > 0
         assert len(monthly_df) > 0
+
+    def test_mtfa_metrics_populated_from_confirmed_triggers(self, tmp_path):
+        _make_ohlcv_csv(tmp_path, "ES", n_bars=260)
+        fake_triggers = [
+            SimpleNamespace(
+                confirmed=True,
+                weekly_trend_aligned=True,
+                monthly_trend_aligned=False,
+            ),
+            SimpleNamespace(
+                confirmed=True,
+                weekly_trend_aligned=False,
+                monthly_trend_aligned=True,
+            ),
+            SimpleNamespace(
+                confirmed=True,
+                weekly_trend_aligned=True,
+                monthly_trend_aligned=True,
+            ),
+            SimpleNamespace(
+                confirmed=False,
+                weekly_trend_aligned=False,
+                monthly_trend_aligned=False,
+            ),
+        ]
+        with patch("ctl.b1_detector.run_b1_detection") as mock_detect:
+            with patch("ctl.simulator.simulate_all") as mock_sim:
+                mock_detect.return_value = fake_triggers
+                mock_sim.return_value = []
+                result = execute_b1_symbol("ES", tmp_path)
+
+        assert result.status == "EXECUTED"
+        assert result.mtfa_weekly_count == 3
+        assert result.mtfa_weekly_true == 2
+        assert result.mtfa_weekly_rate == 0.6667
+        assert result.mtfa_monthly_count == 3
+        assert result.mtfa_monthly_true == 2
+        assert result.mtfa_monthly_rate == 0.6667
 
 
 class TestBuildHtfOhlcv:

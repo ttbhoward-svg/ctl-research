@@ -902,6 +902,43 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   2. Continue next-cycle promotion workstreams (ES drift and PL gap/drift).
   3. Maintain strict profile-lock + gate-first workflow.
 
+---
+
+## H.16 — MTFA Audit Metrics in Run Summaries (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Expose MTFA confluence audit fields in per-symbol execution output for portfolio runner and ops wrapper JSON artifacts.
+- **Inputs:**
+  - H.15 wired weekly/monthly HTF data into execution path.
+  - Monitoring requirement: operational visibility into MTFA alignment rates by symbol.
+- **Decision:**
+  - Extend `SymbolRunResult` with optional MTFA metrics:
+    - `mtfa_weekly_count`, `mtfa_weekly_true`, `mtfa_weekly_rate`
+    - `mtfa_monthly_count`, `mtfa_monthly_true`, `mtfa_monthly_rate`
+  - Compute MTFA metrics from confirmed triggers in `execute_b1_symbol(...)`.
+  - Preserve backward-compatible `to_dict()` behavior: fields are omitted when `None`.
+- **Rationale:**
+  - Adds lightweight observability for confluence quality without changing signal or acceptance logic.
+  - Supports future governance decisions using execution-time MTFA evidence.
+  - Keeps existing JSON consumers compatible.
+- **Verification:**
+  - Unit tests:
+    - `tests/unit/test_run_weekly_b1_portfolio.py` → 42 passed
+    - `tests/unit/test_run_weekly_ops.py` + `tests/unit/test_check_operating_profile.py` → passed
+  - Runtime check:
+    - `scripts/run_weekly_b1_portfolio.py --json` → PASS with MTFA fields present per symbol.
+  - Full suite:
+    - `pytest tests/ -q` → 1205 passed.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - No acceptance framework changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Use MTFA audit metrics to inform Day 4+ analysis/prioritization for ES/PL promotion.
+  2. Keep PA/equity tracks non-gating until basis and drift workstreams are closed.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
