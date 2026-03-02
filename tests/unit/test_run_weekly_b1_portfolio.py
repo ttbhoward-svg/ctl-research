@@ -488,12 +488,12 @@ class TestMakeB1Executor:
                 default_slippage_per_side=0.0,
             )
             _ = executor("ES")
-            mock_exec.assert_called_once_with(
-                "ES",
-                tmp_path,
-                "daily",
-                slippage_per_side=0.25,
-            )
+            mock_exec.assert_called_once()
+            kwargs = mock_exec.call_args.kwargs
+            assert kwargs["symbol"] == "ES"
+            assert kwargs["data_dir"] == tmp_path
+            assert kwargs["timeframe"] == "daily"
+            assert kwargs["slippage_per_side"] == 0.25
 
     def test_factory_uses_default_slippage_when_symbol_missing(self, tmp_path):
         with patch("ctl.run_orchestrator.execute_b1_symbol") as mock_exec:
@@ -504,12 +504,12 @@ class TestMakeB1Executor:
                 default_slippage_per_side=0.05,
             )
             _ = executor("PA")
-            mock_exec.assert_called_once_with(
-                "PA",
-                tmp_path,
-                "daily",
-                slippage_per_side=0.05,
-            )
+            mock_exec.assert_called_once()
+            kwargs = mock_exec.call_args.kwargs
+            assert kwargs["symbol"] == "PA"
+            assert kwargs["data_dir"] == tmp_path
+            assert kwargs["timeframe"] == "daily"
+            assert kwargs["slippage_per_side"] == 0.05
 
 
 # ---------------------------------------------------------------------------

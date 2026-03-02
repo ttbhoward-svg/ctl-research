@@ -629,6 +629,7 @@ def execute_b1_symbol(
 def make_b1_executor(
     data_dir: Path = DEFAULT_DB_CONTINUOUS_DIR,
     timeframe: str = "daily",
+    ts_dir: Path = DEFAULT_TS_DIR,
     slippage_per_side_by_symbol: Optional[Dict[str, float]] = None,
     default_slippage_per_side: float = 0.0,
 ) -> SymbolExecutor:
@@ -640,6 +641,8 @@ def make_b1_executor(
         Directory containing ``{symbol}_continuous.csv`` files.
     timeframe : str
         Timeframe label passed to the detector.
+    ts_dir : Path
+        TradeStation directory for non-continuous symbol fallback.
     slippage_per_side_by_symbol : dict, optional
         Mapping ``{symbol: slippage_per_side}`` in price units.
     default_slippage_per_side : float
@@ -654,9 +657,10 @@ def make_b1_executor(
     def _executor(symbol: str) -> SymbolRunResult:
         slippage = float(slippage_map.get(symbol, default_slippage_per_side))
         return execute_b1_symbol(
-            symbol,
-            data_dir,
-            timeframe,
+            symbol=symbol,
+            data_dir=data_dir,
+            ts_dir=ts_dir,
+            timeframe=timeframe,
             slippage_per_side=slippage,
         )
     return _executor

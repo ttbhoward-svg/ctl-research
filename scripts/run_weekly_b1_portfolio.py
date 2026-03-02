@@ -105,6 +105,13 @@ def main() -> None:
         default=False,
         help="Gate + plan only, no strategy execution.",
     )
+    parser.add_argument(
+        "--timeframe",
+        type=str,
+        choices=["daily", "weekly"],
+        default="daily",
+        help="B1 detection timeframe (default: daily).",
+    )
     args = parser.parse_args()
 
     # --- Step 1: Gate check ---
@@ -139,7 +146,10 @@ def main() -> None:
         sym: cfg.slippage_per_side for sym, cfg in profile.symbol_settings.items()
     }
     executor = (
-        make_b1_executor(slippage_per_side_by_symbol=slippage_map)
+        make_b1_executor(
+            timeframe=args.timeframe,
+            slippage_per_side_by_symbol=slippage_map,
+        )
         if not args.dry_run
         else None
     )
