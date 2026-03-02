@@ -1902,6 +1902,34 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. If accepted for cycle promotion, create `operating_profile_v2.yaml` with PL expected status update and candidate metadata notes.
   2. Re-run `scripts/check_operating_profile.py` against v2 profile before adopting in run workflows.
 
+---
+
+## H.37 — Operating Profile v2 Lock (PL ACCEPT) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Lock and validate `operating_profile_v2.yaml` with PL promoted to `ACCEPT` using explicit harmonization settings.
+- **Inputs / Artifacts updated:**
+  - `configs/cutover/operating_profile_v2.yaml` (new)
+  - `src/ctl/operating_profile.py` (optional per-symbol `pl_harmonization` config)
+  - `scripts/check_operating_profile.py` (profile-driven PL harmonization in gate path)
+  - `src/ctl/run_orchestrator.py` (profile-driven PL harmonization in runner gate path)
+  - `tests/unit/test_check_operating_profile.py` (loader coverage for harmonization config)
+- **Validation:**
+  - `pytest tests/unit/test_check_operating_profile.py tests/unit/test_pl_harmonization.py tests/unit/test_run_weekly_b1_portfolio.py -q` → 79 passed.
+  - `python scripts/check_operating_profile.py --profile configs/cutover/operating_profile_v2.yaml` → PASS.
+  - `python scripts/run_weekly_b1_portfolio.py --profile configs/cutover/operating_profile_v2.yaml --dry-run --json` → gate_passed=true.
+- **Decision:**
+  - Adopt `operating_profile_v2.yaml` as the current locked profile for gated runs.
+  - Expected statuses: `ES=WATCH`, `CL=ACCEPT`, `PL=ACCEPT`.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Run one non-dry v2 portfolio run and persist summary artifact.
+  2. Recompute promotion priority under v2 baseline and confirm PL no longer consumes remediation budget.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:

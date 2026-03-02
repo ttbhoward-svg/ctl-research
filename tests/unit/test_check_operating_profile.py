@@ -160,6 +160,27 @@ class TestLoadOperatingProfile:
 
         assert profile.symbol_settings["PL"].notes == ""
 
+    def test_pl_harmonization_default_empty_dict(self, tmp_path):
+        data = _make_profile_dict()
+        assert "pl_harmonization" not in data["symbol_settings"]["PL"]
+        path = _write_profile(tmp_path, data)
+        profile = load_operating_profile(path)
+        assert profile.symbol_settings["PL"].pl_harmonization == {}
+
+    def test_pl_harmonization_parsed(self, tmp_path):
+        data = _make_profile_dict()
+        data["symbol_settings"]["PL"]["pl_harmonization"] = {
+            "mode": "window_combined",
+            "top_k": 5,
+            "regime_preset": "yearly_2020_2022",
+        }
+        path = _write_profile(tmp_path, data)
+        profile = load_operating_profile(path)
+        h = profile.symbol_settings["PL"].pl_harmonization
+        assert h["mode"] == "window_combined"
+        assert h["top_k"] == 5
+        assert h["regime_preset"] == "yearly_2020_2022"
+
     def test_slippage_default_zero_when_missing(self, tmp_path):
         data = _make_profile_dict()
         # PL has no explicit slippage, so it should default to 0.0.

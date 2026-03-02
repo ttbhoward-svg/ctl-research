@@ -38,6 +38,7 @@ class SymbolSetting:
     expected_status: str
     slippage_per_side: float = 0.0
     notes: str = ""
+    pl_harmonization: Dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,7 @@ def load_operating_profile(path: Path) -> OperatingProfile:
             expected_status=str(cfg["expected_status"]),
             slippage_per_side=float(cfg.get("slippage_per_side", 0.0)),
             notes=str(cfg.get("notes", "")),
+            pl_harmonization=dict(cfg.get("pl_harmonization", {})),
         )
 
     # Parse policy constraints (optional section with defaults).

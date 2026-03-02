@@ -41,6 +41,7 @@ from ctl.operating_profile import (
     load_operating_profile,
 )
 from ctl.parity_prep import discover_ts_file, load_and_validate
+from ctl.pl_harmonization import apply_pl_harmonization, resolve_pl_regimes
 from ctl.roll_reconciliation import load_roll_manifest
 from ctl.universe import TICK_VALUES
 
@@ -252,6 +253,35 @@ def run_profile_gate(
             tick_size=settings.tick_size,
             max_day_delta=settings.max_day_delta,
         )
+
+        # Optional PL harmonization path (opt-in via profile settings).
+        if sym == "PL":
+            hcfg = settings.pl_harmonization or {}
+            mode = str(hcfg.get("mode", "none"))
+            if mode != "none":
+                top_k = int(hcfg.get("top_k", 5))
+                preset = str(hcfg.get("regime_preset", "legacy"))
+                regimes = resolve_pl_regimes(preset)
+                can_h, manifest_h, _ = apply_pl_harmonization(
+                    canonical_df,
+                    manifest_entries,
+                    ts_adj_df,
+                    diag.l2.detail_df,
+                    mode=mode,
+                    top_k=top_k,
+                    regimes=regimes,
+                    regime_preset=preset,
+                )
+                diag = run_diagnostics(
+                    canonical_adj_df=can_h,
+                    ts_adj_df=ts_adj_df,
+                    manifest_entries=manifest_h,
+                    ts_unadj_df=ts_unadj_df,
+                    symbol=sym,
+                    tick_size=settings.tick_size,
+                    max_day_delta=settings.max_day_delta,
+                )
+
         acceptance = acceptance_from_diagnostics(diag)
         result = check_symbol_status(sym, settings.expected_status, acceptance.decision)
         symbol_results.append(result)

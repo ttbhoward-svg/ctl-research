@@ -1,0 +1,57 @@
+# Operating Profile v2 — Locked configuration after PL promotion candidate.
+#
+# v2 preserves all v1 policy thresholds and strategy logic, and only updates
+# PL expected status to ACCEPT under an explicit, reproducible harmonization
+# setting (window_combined + yearly_2020_2022 regime preset).
+
+cycle_id: cutover_v1
+locked_date: "2026-03-02"
+portfolio_recommendation: CONDITIONAL GO
+portfolio_scope: futures_only
+
+gating_universe:
+  - ES
+  - CL
+  - PL
+
+non_gating_symbols:
+  - PA
+  - AAPL
+  - XLE
+
+symbol_settings:
+  ES:
+    tick_size: 0.25
+    max_day_delta: 3
+    slippage_per_side: 0.25
+    expected_status: WATCH
+    notes: >-
+      Mean drift above threshold (7.33 > 5.0); pairing clean (n_fail=0).
+      No promoted ES harmonization change in this cycle.
+
+  CL:
+    tick_size: 0.01
+    max_day_delta: 3
+    slippage_per_side: 0.01
+    expected_status: ACCEPT
+    notes: >-
+      Fail fraction reduced to 13.46% under calibrated roll policy
+      (cd=2, all months, next_session, convention=add).
+
+  PL:
+    tick_size: 0.10
+    max_day_delta: 2
+    slippage_per_side: 0.10
+    expected_status: ACCEPT
+    pl_harmonization:
+      mode: window_combined
+      top_k: 5
+      regime_preset: yearly_2020_2022
+    notes: >-
+      Promoted candidate from H.36/H.37 integrated path:
+      window_combined top_k=5 + yearly_2020_2022 regime offsets.
+      Validation snapshot: mean_gap_diff=0.99, mean_drift=4.78.
+
+policy_constraints:
+  thresholds_locked: true
+  strategy_logic_locked: true
