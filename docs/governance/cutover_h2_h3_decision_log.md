@@ -1195,6 +1195,57 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Build an offline PL regime-aware basis correction prototype and measure impact on `mean_gap_diff` and `mean_drift`.
   2. Re-run H.17 ranking only if prototype shows material improvement without policy changes.
 
+---
+
+## H.23 — Offline PL Regime-Aware Basis Correction Prototype (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Implement and evaluate an offline regime-aware PL basis correction candidate using observed signed-basis medians from H.22.
+- **Inputs:**
+  - Regime offsets from H.22:
+    - `pre_2020` median signed diff: `+13.7000`
+    - `post_2024` median signed diff: `-3.4000`
+  - New prototype artifacts:
+    - `src/ctl/pl_basis_correction.py`
+    - `scripts/evaluate_pl_regime_correction.py`
+    - `tests/unit/test_pl_basis_correction.py`
+- **Method (offline only):**
+  - Derive per-regime median signed diffs (`close_can - close_ts`) on same-date overlap.
+  - Apply piecewise correction to canonical close:
+    - `Close_corrected = Close - median_signed_diff` within each regime window.
+  - Re-run diagnostics and acceptance on corrected series for measurement.
+- **Results:**
+  - Baseline (locked):
+    - decision `WATCH`
+    - `mean_gap_diff=1.6600`
+    - `mean_drift=8.2821`
+  - Corrected (offline diagnostic):
+    - decision `WATCH`
+    - `mean_gap_diff=1.6600` (unchanged)
+    - `mean_drift=5.6209`
+  - Delta (corrected - baseline):
+    - `mean_gap_diff=+0.0000`
+    - `mean_drift=-2.6613`
+- **Decision:**
+  - Candidate shows material drift improvement but is insufficient for promotion under current thresholds.
+  - Keep as research-only prototype; do not apply to production canonical series.
+  - Next leverage point is gap-side treatment (L3) plus incremental drift reduction to cross `<=5.0`.
+- **Rationale:**
+  - Regime-aware correction validates the H.22 thesis and recovers most drift excess.
+  - Acceptance remains blocked by both gap and residual drift; a single correction dimension is not enough.
+- **Verification:**
+  - `tests/unit/test_pl_basis_correction.py` → 3 passed
+  - Script outputs verified (text + JSON)
+  - Full suite: `pytest tests/ -q` → 1228 passed
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Design and evaluate an offline PL gap-treatment candidate (L3-oriented) compatible with regime-aware drift correction.
+  2. Re-run H.17 ranking only after combined candidate materially improves both gap and drift.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
