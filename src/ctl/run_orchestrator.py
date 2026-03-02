@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+import pandas as pd
+
 from ctl.canonical_acceptance import acceptance_from_diagnostics
 from ctl.cutover_diagnostics import run_diagnostics
 from ctl.operating_profile import (
@@ -411,10 +413,51 @@ def save_run_summary(
 # B1 strategy executor (H.9)
 # ---------------------------------------------------------------------------
 
+def _build_htf_ohlcv(
+    daily_df: pd.DataFrame,
+    timeframe: str,
+) -> pd.DataFrame:
+    """Resample daily OHLCV into weekly or monthly bars for MTFA flags.
+
+    Parameters
+    ----------
+    daily_df : DataFrame
+        Daily bars with Date/Open/High/Low/Close/Volume columns.
+    timeframe : str
+        Either ``"weekly"`` or ``"monthly"``.
+
+    Returns
+    -------
+    DataFrame
+        Resampled OHLCV with the same column names.
+    """
+    if timeframe not in {"weekly", "monthly"}:
+        raise ValueError("timeframe must be 'weekly' or 'monthly'")
+
+    rule = "W-FRI" if timeframe == "weekly" else "ME"
+    cols = ["Date", "Open", "High", "Low", "Close", "Volume"]
+    work = daily_df[cols].copy()
+    work["Date"] = pd.to_datetime(work["Date"], errors="coerce")
+    work = work.dropna(subset=["Date"]).sort_values("Date")
+    work = work.drop_duplicates(subset=["Date"], keep="last")
+    work = work.set_index("Date")
+
+    htf = work.resample(rule, label="right", closed="right").agg({
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum",
+    })
+    htf = htf.dropna(subset=["Open", "High", "Low", "Close"]).reset_index()
+    return htf[cols]
+
+
 def execute_b1_symbol(
     symbol: str,
     data_dir: Path,
     timeframe: str = "daily",
+    slippage_per_side: float = 0.0,
 ) -> SymbolRunResult:
     """Run B1 detection + simulation for one symbol.
 
@@ -429,6 +472,8 @@ def execute_b1_symbol(
         Directory containing ``{symbol}_continuous.csv``.
     timeframe : str
         Timeframe label passed to the detector.
+    slippage_per_side : float
+        Entry/stop slippage applied per side in price units.
 
     Returns
     -------
@@ -454,9 +499,22 @@ def execute_b1_symbol(
             detail=f"Insufficient bars ({len(df)} < 50)",
         )
 
-    triggers = run_b1_detection(df, symbol, timeframe)
+    weekly_df = _build_htf_ohlcv(df, "weekly")
+    monthly_df = _build_htf_ohlcv(df, "monthly")
+
+    triggers = run_b1_detection(
+        df,
+        symbol,
+        timeframe,
+        weekly_df=weekly_df,
+        monthly_df=monthly_df,
+    )
     confirmed = [t for t in triggers if t.confirmed]
-    results = simulate_all(confirmed, df, SimConfig())
+    results = simulate_all(
+        confirmed,
+        df,
+        SimConfig(slippage_per_side=slippage_per_side),
+    )
 
     trigger_count = len(confirmed)
     trade_count = len(results)
@@ -478,6 +536,8 @@ def execute_b1_symbol(
 def make_b1_executor(
     data_dir: Path = DEFAULT_DB_CONTINUOUS_DIR,
     timeframe: str = "daily",
+    slippage_per_side_by_symbol: Optional[Dict[str, float]] = None,
+    default_slippage_per_side: float = 0.0,
 ) -> SymbolExecutor:
     """Factory that returns a B1 executor bound to a data directory.
 
@@ -487,11 +547,23 @@ def make_b1_executor(
         Directory containing ``{symbol}_continuous.csv`` files.
     timeframe : str
         Timeframe label passed to the detector.
+    slippage_per_side_by_symbol : dict, optional
+        Mapping ``{symbol: slippage_per_side}`` in price units.
+    default_slippage_per_side : float
+        Fallback slippage when a symbol is not present in the mapping.
 
     Returns
     -------
     Callable[[str], SymbolRunResult]
     """
+    slippage_map = dict(slippage_per_side_by_symbol or {})
+
     def _executor(symbol: str) -> SymbolRunResult:
-        return execute_b1_symbol(symbol, data_dir, timeframe)
+        slippage = float(slippage_map.get(symbol, default_slippage_per_side))
+        return execute_b1_symbol(
+            symbol,
+            data_dir,
+            timeframe,
+            slippage_per_side=slippage,
+        )
     return _executor

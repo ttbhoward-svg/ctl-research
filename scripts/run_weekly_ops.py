@@ -207,7 +207,14 @@ def run_weekly_ops(
         profile_path=str(profile_path),
     )
 
-    executor = make_b1_executor() if not dry_run else None
+    slippage_map = {
+        sym: cfg.slippage_per_side for sym, cfg in profile.symbol_settings.items()
+    }
+    executor = (
+        make_b1_executor(slippage_per_side_by_symbol=slippage_map)
+        if not dry_run
+        else None
+    )
     symbol_results = execute_run_plan(plan, executor=executor, dry_run=dry_run)
 
     # --- Summarize ---

@@ -36,6 +36,7 @@ class SymbolSetting:
     tick_size: float
     max_day_delta: int
     expected_status: str
+    slippage_per_side: float = 0.0
     notes: str = ""
 
 
@@ -148,6 +149,7 @@ def load_operating_profile(path: Path) -> OperatingProfile:
             tick_size=float(cfg["tick_size"]),
             max_day_delta=int(cfg["max_day_delta"]),
             expected_status=str(cfg["expected_status"]),
+            slippage_per_side=float(cfg.get("slippage_per_side", 0.0)),
             notes=str(cfg.get("notes", "")),
         )
 

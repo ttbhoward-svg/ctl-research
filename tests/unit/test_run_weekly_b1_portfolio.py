@@ -21,6 +21,7 @@ from ctl.operating_profile import (
     load_operating_profile,
 )
 from ctl.run_orchestrator import (
+    _build_htf_ohlcv,
     RunPlan,
     RunSummary,
     SymbolRunResult,
@@ -346,6 +347,48 @@ class TestExecuteB1Symbol:
         assert "trades" in result.detail
         assert "R=" in result.detail
 
+    def test_passes_weekly_and_monthly_htf_to_detector(self, tmp_path):
+        _make_ohlcv_csv(tmp_path, "ES", n_bars=260)
+        with patch("ctl.b1_detector.run_b1_detection") as mock_detect:
+            with patch("ctl.simulator.simulate_all") as mock_sim:
+                mock_detect.return_value = []
+                mock_sim.return_value = []
+                result = execute_b1_symbol("ES", tmp_path)
+
+        assert result.status == "EXECUTED"
+        assert mock_detect.call_count == 1
+        _, kwargs = mock_detect.call_args
+        weekly_df = kwargs["weekly_df"]
+        monthly_df = kwargs["monthly_df"]
+        assert weekly_df is not None
+        assert monthly_df is not None
+        assert set(weekly_df.columns) == {"Date", "Open", "High", "Low", "Close", "Volume"}
+        assert set(monthly_df.columns) == {"Date", "Open", "High", "Low", "Close", "Volume"}
+        assert len(weekly_df) > 0
+        assert len(monthly_df) > 0
+
+
+class TestBuildHtfOhlcv:
+    def test_weekly_and_monthly_resample_shape(self, tmp_path):
+        csv_path = _make_ohlcv_csv(tmp_path, "ES", n_bars=260)
+        daily = pd.read_csv(csv_path)
+
+        weekly = _build_htf_ohlcv(daily, "weekly")
+        monthly = _build_htf_ohlcv(daily, "monthly")
+
+        assert set(weekly.columns) == {"Date", "Open", "High", "Low", "Close", "Volume"}
+        assert set(monthly.columns) == {"Date", "Open", "High", "Low", "Close", "Volume"}
+        assert len(weekly) > 0
+        assert len(monthly) > 0
+        assert len(weekly) <= len(daily)
+        assert len(monthly) <= len(weekly)
+
+    def test_invalid_timeframe_raises(self, tmp_path):
+        csv_path = _make_ohlcv_csv(tmp_path, "ES", n_bars=100)
+        daily = pd.read_csv(csv_path)
+        with pytest.raises(ValueError, match="timeframe must be"):
+            _build_htf_ohlcv(daily, "hourly")
+
 
 # ---------------------------------------------------------------------------
 # Tests: make_b1_executor
@@ -362,6 +405,38 @@ class TestMakeB1Executor:
         result = executor("ES")
         assert result.status == "EXECUTED"
         assert result.symbol == "ES"
+
+    def test_factory_passes_symbol_slippage(self, tmp_path):
+        with patch("ctl.run_orchestrator.execute_b1_symbol") as mock_exec:
+            mock_exec.return_value = SymbolRunResult("ES", "EXECUTED", "ok")
+            executor = make_b1_executor(
+                data_dir=tmp_path,
+                slippage_per_side_by_symbol={"ES": 0.25},
+                default_slippage_per_side=0.0,
+            )
+            _ = executor("ES")
+            mock_exec.assert_called_once_with(
+                "ES",
+                tmp_path,
+                "daily",
+                slippage_per_side=0.25,
+            )
+
+    def test_factory_uses_default_slippage_when_symbol_missing(self, tmp_path):
+        with patch("ctl.run_orchestrator.execute_b1_symbol") as mock_exec:
+            mock_exec.return_value = SymbolRunResult("PA", "EXECUTED", "ok")
+            executor = make_b1_executor(
+                data_dir=tmp_path,
+                slippage_per_side_by_symbol={"ES": 0.25},
+                default_slippage_per_side=0.05,
+            )
+            _ = executor("PA")
+            mock_exec.assert_called_once_with(
+                "PA",
+                tmp_path,
+                "daily",
+                slippage_per_side=0.05,
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -40,12 +40,14 @@ def _make_profile_dict(**overrides) -> dict:
                 "tick_size": 0.25,
                 "max_day_delta": 3,
                 "expected_status": "WATCH",
+                "slippage_per_side": 0.25,
                 "notes": "test note",
             },
             "CL": {
                 "tick_size": 0.01,
                 "max_day_delta": 3,
                 "expected_status": "ACCEPT",
+                "slippage_per_side": 0.01,
             },
             "PL": {
                 "tick_size": 0.10,
@@ -112,11 +114,13 @@ class TestLoadOperatingProfile:
         assert es.tick_size == 0.25
         assert es.max_day_delta == 3
         assert es.expected_status == "WATCH"
+        assert es.slippage_per_side == 0.25
         assert es.notes == "test note"
 
         cl = profile.symbol_settings["CL"]
         assert cl.tick_size == 0.01
         assert cl.expected_status == "ACCEPT"
+        assert cl.slippage_per_side == 0.01
 
     def test_defaults_for_optional_fields(self, tmp_path):
         data = _make_profile_dict()
@@ -149,12 +153,21 @@ class TestLoadOperatingProfile:
 
     def test_notes_default_empty_string(self, tmp_path):
         data = _make_profile_dict()
-        # CL has no notes in _make_profile_dict, so notes should default to ""
-        assert "notes" not in data["symbol_settings"]["CL"]
+        # PL has no notes in _make_profile_dict, so notes should default to ""
+        assert "notes" not in data["symbol_settings"]["PL"]
         path = _write_profile(tmp_path, data)
         profile = load_operating_profile(path)
 
-        assert profile.symbol_settings["CL"].notes == ""
+        assert profile.symbol_settings["PL"].notes == ""
+
+    def test_slippage_default_zero_when_missing(self, tmp_path):
+        data = _make_profile_dict()
+        # PL has no explicit slippage, so it should default to 0.0.
+        assert "slippage_per_side" not in data["symbol_settings"]["PL"]
+        path = _write_profile(tmp_path, data)
+        profile = load_operating_profile(path)
+
+        assert profile.symbol_settings["PL"].slippage_per_side == 0.0
 
     def test_policy_constraints_parsed(self, tmp_path):
         data = _make_profile_dict()

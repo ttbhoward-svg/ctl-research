@@ -781,6 +781,127 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
 3. Install cron/launchd scheduler per runbook.
 4. Calibrate per-instrument SimConfig slippage.
 
+---
+
+## H.13 — SimConfig Slippage Calibration (Day 2) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Wire calibrated per-symbol execution slippage into live portfolio runner paths (`run_weekly_b1_portfolio`, `run_weekly_ops`) without altering gate or strategy semantics.
+- **Inputs:**
+  - H.12 closeout identified open item: per-instrument `SimConfig` slippage still at zero.
+  - Locked profile tick sizes: ES `0.25`, CL `0.01`, PL `0.10`.
+- **Decision:**
+  - Extend operating profile symbol settings with optional `slippage_per_side`.
+  - Lock slippage defaults in `configs/cutover/operating_profile_v1.yaml`:
+    - ES: `0.25`
+    - CL: `0.01`
+    - PL: `0.10`
+  - Wire orchestrator executor factory to pass symbol-specific slippage into `SimConfig(slippage_per_side=...)`.
+  - Apply same wiring in both direct runner and ops wrapper entrypoints.
+- **Rationale:**
+  - Keeps cost assumptions explicit and machine-readable in one source of truth (operating profile).
+  - Preserves backward compatibility (`slippage_per_side` defaults to `0.0` if omitted).
+  - Brings execution metrics closer to cost-on reality while retaining gate stability.
+- **Verification:**
+  - Unit tests:
+    - `tests/unit/test_check_operating_profile.py` → 28 passed
+    - `tests/unit/test_run_weekly_b1_portfolio.py` → 38 passed
+    - `tests/unit/test_run_weekly_ops.py` → 20 passed
+  - Runtime checks:
+    - `scripts/check_operating_profile.py` → PASS
+    - `scripts/run_weekly_b1_portfolio.py --json` → PASS, run summary persisted
+  - Observed R deltas after slippage-on wiring:
+    - ES total R: `1.1681` → `1.1594`
+    - CL total R: `-0.1021` → `-0.2469`
+    - PL total R: `-0.3222` → `-0.3454`
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - No acceptance framework changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Add weekly/monthly HTF data loading for MTFA confluence flags (next Day 3 item).
+  2. Reassess slippage calibration with live/paper fills once enough observations accumulate.
+  3. Keep slippage defaults versioned in operating profile for future cycle locks.
+
+---
+
+## H.14 — ES Drift Remediation Checkpoint (Day 2) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Execute ES drift-focused diagnostics, identify highest-contributing intervals, test one harmonization candidate, and recompute acceptance delta.
+- **Inputs:**
+  - Canonical ES continuous + manifest from `data/processed/databento/cutover_v1/continuous/`
+  - TS ES custom ADJ/UNADJ references from `data/raw/tradestation/cutover_v1/`
+  - Locked baseline settings: `tick_size=0.25`, `max_day_delta=3`
+- **Baseline result (locked):**
+  - strict/policy: `WATCH / WATCH`
+  - acceptance: `WATCH` (not accepted)
+  - blocker: mean drift `7.3289 > 5.0000`
+  - metrics: `n_paired=32`, `n_fail=0`, `mean_gap_diff=0.53125`, `mean_drift=7.328928`
+- **Top 3 ES L4 drift contributors:**
+  1. `2025-03-18 -> 2025-06-17` (WATCH): mean drift `18.353175`, max drift `200.25`, contribution `7.7222%`
+  2. `2020-03-16 -> 2020-06-15` (WATCH): mean drift `13.103175`, max drift `78.25`, contribution `5.5133%`
+  3. `2019-12-15 -> 2020-03-16` (WATCH): mean drift `10.180328`, max drift `62.25`, contribution `4.1475%`
+- **Candidate tested:** Harmonization tolerance adjustment `max_day_delta=5`.
+- **Candidate result:**
+  - strict/policy: `WATCH / WATCH`
+  - acceptance: `WATCH` (not accepted)
+  - reason unchanged: mean drift `7.3289 > 5.0000`
+  - delta vs baseline: `n_paired=0`, `n_fail=0`, `mean_gap_diff=0.000000`, `mean_drift=0.000000`
+- **Decision:**
+  - ES remains `WATCH`; no promotion to `ACCEPT`.
+  - Tested pairing-tolerance harmonization does not affect the ES drift floor.
+  - No threshold or strategy-logic changes.
+- **Gate impact:**
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+  - Gating status board unchanged (`ES WATCH`, `CL ACCEPT`, `PL WATCH`).
+- **Next actions:**
+  1. Proceed to Day 3 plan item: wire weekly/monthly HTF loading for MTFA confluence in runner execution.
+  2. Keep ES drift as monitored known limitation for this cycle.
+
+---
+
+## H.15 — MTFA HTF Wiring in Runner Execution (Day 3) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Add weekly/monthly higher-timeframe (HTF) data loading to the live B1 execution path so MTFA confluence flags can be computed during runner execution.
+- **Inputs:**
+  - `b1_detector.run_b1_detection(...)` already supports `weekly_df` and `monthly_df`.
+  - `run_orchestrator.execute_b1_symbol(...)` previously called detector without HTF inputs.
+- **Decision:**
+  - Add OHLCV resampling helper in orchestrator to derive HTF bars from canonical daily series:
+    - weekly: `W-FRI`
+    - monthly: `ME`
+  - Pass derived `weekly_df` and `monthly_df` into `run_b1_detection(...)` for each executed symbol.
+  - Keep interfaces backward-compatible; no gate or acceptance semantics changed.
+- **Rationale:**
+  - Enables MTFA confluence population in operational execution without adding new external data dependencies.
+  - Reuses canonical daily data and deterministic resampling rules.
+  - Keeps runner behavior aligned with Phase 1a MTFA intent while preserving current status board.
+- **Verification:**
+  - Unit tests:
+    - `tests/unit/test_run_weekly_b1_portfolio.py` → 41 passed (includes new HTF wiring tests)
+    - `tests/unit/test_run_weekly_ops.py` + `tests/unit/test_check_operating_profile.py` → all passed
+  - Runtime checks:
+    - `scripts/check_operating_profile.py` → PASS
+    - `scripts/run_weekly_b1_portfolio.py --dry-run` → PASS
+    - `scripts/run_weekly_b1_portfolio.py --json` → PASS, summary persisted
+  - Full suite:
+    - `pytest tests/ -q` → 1204 passed
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic rule changes.
+  - No acceptance framework changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Add optional MTFA fields to run-summary diagnostics/audit output if needed for monitoring.
+  2. Continue next-cycle promotion workstreams (ES drift and PL gap/drift).
+  3. Maintain strict profile-lock + gate-first workflow.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
