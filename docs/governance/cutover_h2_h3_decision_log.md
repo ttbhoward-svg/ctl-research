@@ -1053,6 +1053,47 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Continue PL targeted gap/drift diagnostics (interval-level basis investigation) rather than broad sweep.
   2. Re-run H.17 ranking only after a material data/variant change.
 
+---
+
+## H.20 — PL Interval-Level Basis Investigation (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Implement and run targeted interval-level PL basis analysis to move from broad variant sweeps to actionable drift diagnostics.
+- **Inputs:**
+  - PL L2/L4 diagnostics under locked profile settings.
+  - L4 explanation intervals and L2 roll-match detail rows.
+  - New analyzer artifacts:
+    - `src/ctl/pl_basis_analysis.py`
+    - `scripts/analyze_pl_basis_intervals.py`
+    - `tests/unit/test_pl_basis_analysis.py`
+- **Decision:**
+  - Add interval-basis report that ranks top drift-contributing intervals and computes:
+    - mean/p95 absolute basis diff
+    - median signed diff (`close_can - close_ts`)
+    - percent of days canonical above TS
+    - nearby FAIL roll-row counts around interval bounds
+  - Generate PL report CSV (diagnostic artifact, not governance-tracked source file):
+    - `data/processed/cutover_v1/diagnostics_h6/PL_interval_basis_report.csv`
+- **Findings (top intervals):**
+  - Largest contributor is late sample (`2025-12-28 -> 2026-02-17`, `8.7084%`) with very large tail basis (`p95_abs_diff=140.44`) and mixed sign (`median_signed_diff=-1.4`, `pct_can_above_ts=0.4706`).
+  - Several high-contribution historical intervals are strongly positive-signed (`median_signed_diff ~ +15 to +16`, `pct_can_above_ts=1.0`), indicating regime-dependent basis behavior rather than one-directional offset.
+  - Nearby FAIL roll-row counts are low in top intervals, suggesting drift concentration is not purely explained by localized roll mismatches.
+- **Rationale:**
+  - Provides concrete interval targets for focused remediation and avoids repeated broad sweeps with low expected improvement.
+  - Distinguishes sign-regime behavior (positive historical vs mixed/negative recent) for next-step investigation.
+- **Verification:**
+  - `tests/unit/test_pl_basis_analysis.py` → 5 passed
+  - Full suite: `pytest tests/ -q` → 1218 passed
+  - Script run successful with saved report CSV.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Investigate late-sample PL interval (`2025-12-28 -> 2026-02-17`) for reference-series basis and potential session/close-type artifacts.
+  2. Compare signed-basis regimes across pre-2020 vs post-2024 intervals before proposing any new harmonization candidate.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
