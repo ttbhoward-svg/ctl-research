@@ -418,7 +418,7 @@ def summarize_run(
     RunSummary
     """
     if timestamp is None:
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
 
     return RunSummary(
         timestamp=timestamp,
@@ -534,7 +534,7 @@ def execute_b1_symbol(
     SymbolRunResult with trigger/trade metrics.
     """
     from ctl.b1_detector import run_b1_detection
-    from ctl.simulator import SimConfig, simulate_all
+    from ctl.simulator import SimConfig, simulate_trade
 
     csv_path = data_dir / f"{symbol}_continuous.csv"
     df, errors = load_and_validate(csv_path, f"B1 {symbol}")
@@ -605,22 +605,39 @@ def execute_b1_symbol(
         weekly_df=weekly_df,
         monthly_df=monthly_df,
     )
-    confirmed = [t for t in triggers if t.confirmed]
-    weekly_vals = [t.weekly_trend_aligned for t in confirmed if t.weekly_trend_aligned is not None]
-    monthly_vals = [t.monthly_trend_aligned for t in confirmed if t.monthly_trend_aligned is not None]
+    confirmed = [t for t in triggers if t.confirmed and t.entry_bar_idx is not None]
+
+    # Exit-aware non-overlap gating:
+    # keep triggers in entry order and drop any trigger that would enter
+    # before the prior kept trade exits.
+    selected_confirmed = sorted(confirmed, key=lambda t: int(t.entry_bar_idx))
+    selected: list = []
+    results = []
+    last_exit_idx = -1
+    sim_cfg = SimConfig(slippage_per_side=slippage_per_side)
+    for trig in selected_confirmed:
+        if int(trig.entry_bar_idx) <= last_exit_idx:
+            continue
+        trade = simulate_trade(trig, detect_df, sim_cfg)
+        if trade is None:
+            continue
+        selected.append(trig)
+        results.append(trade)
+        last_exit_idx = int(trade.exit_bar_idx)
+
+    weekly_vals = [
+        t.weekly_trend_aligned for t in selected if t.weekly_trend_aligned is not None
+    ]
+    monthly_vals = [
+        t.monthly_trend_aligned for t in selected if t.monthly_trend_aligned is not None
+    ]
     weekly_count = len(weekly_vals)
     monthly_count = len(monthly_vals)
     weekly_true = sum(1 for v in weekly_vals if v)
     monthly_true = sum(1 for v in monthly_vals if v)
     weekly_rate = (weekly_true / weekly_count) if weekly_count else None
     monthly_rate = (monthly_true / monthly_count) if monthly_count else None
-    results = simulate_all(
-        confirmed,
-        detect_df,
-        SimConfig(slippage_per_side=slippage_per_side),
-    )
-
-    trigger_count = len(confirmed)
+    trigger_count = len(selected)
     trade_count = len(results)
     r_values = [t.theoretical_r for t in results]
     total_r = sum(r_values) if r_values else 0.0

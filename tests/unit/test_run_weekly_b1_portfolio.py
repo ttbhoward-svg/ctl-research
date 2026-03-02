@@ -367,9 +367,9 @@ class TestExecuteB1Symbol:
     def test_passes_weekly_and_monthly_htf_to_detector(self, tmp_path):
         _make_ohlcv_csv(tmp_path, "ES", n_bars=260)
         with patch("ctl.b1_detector.run_b1_detection") as mock_detect:
-            with patch("ctl.simulator.simulate_all") as mock_sim:
+            with patch("ctl.simulator.simulate_trade") as mock_sim:
                 mock_detect.return_value = []
-                mock_sim.return_value = []
+                mock_sim.return_value = None
                 result = execute_b1_symbol("ES", tmp_path)
 
         assert result.status == "EXECUTED"
@@ -387,9 +387,9 @@ class TestExecuteB1Symbol:
     def test_weekly_timeframe_uses_weekly_detection_df(self, tmp_path):
         _make_ohlcv_csv(tmp_path, "ES", n_bars=260)
         with patch("ctl.b1_detector.run_b1_detection") as mock_detect:
-            with patch("ctl.simulator.simulate_all") as mock_sim:
+            with patch("ctl.simulator.simulate_trade") as mock_sim:
                 mock_detect.return_value = []
-                mock_sim.return_value = []
+                mock_sim.return_value = None
                 _ = execute_b1_symbol("ES", tmp_path, timeframe="weekly")
 
         assert mock_detect.call_count == 1
@@ -404,29 +404,37 @@ class TestExecuteB1Symbol:
         fake_triggers = [
             SimpleNamespace(
                 confirmed=True,
+                entry_bar_idx=50,
                 weekly_trend_aligned=True,
                 monthly_trend_aligned=False,
             ),
             SimpleNamespace(
                 confirmed=True,
+                entry_bar_idx=100,
                 weekly_trend_aligned=False,
                 monthly_trend_aligned=True,
             ),
             SimpleNamespace(
                 confirmed=True,
+                entry_bar_idx=150,
                 weekly_trend_aligned=True,
                 monthly_trend_aligned=True,
             ),
             SimpleNamespace(
                 confirmed=False,
+                entry_bar_idx=None,
                 weekly_trend_aligned=False,
                 monthly_trend_aligned=False,
             ),
         ]
         with patch("ctl.b1_detector.run_b1_detection") as mock_detect:
-            with patch("ctl.simulator.simulate_all") as mock_sim:
+            with patch("ctl.simulator.simulate_trade") as mock_sim:
                 mock_detect.return_value = fake_triggers
-                mock_sim.return_value = []
+                mock_sim.side_effect = [
+                    SimpleNamespace(exit_bar_idx=80, theoretical_r=1.0),
+                    SimpleNamespace(exit_bar_idx=120, theoretical_r=-0.5),
+                    SimpleNamespace(exit_bar_idx=200, theoretical_r=0.25),
+                ]
                 result = execute_b1_symbol("ES", tmp_path)
 
         assert result.status == "EXECUTED"
@@ -436,6 +444,28 @@ class TestExecuteB1Symbol:
         assert result.mtfa_monthly_count == 3
         assert result.mtfa_monthly_true == 2
         assert result.mtfa_monthly_rate == 0.6667
+
+    def test_exit_aware_non_overlap_gating(self, tmp_path):
+        _make_ohlcv_csv(tmp_path, "ES", n_bars=260)
+        fake_triggers = [
+            SimpleNamespace(confirmed=True, entry_bar_idx=50, weekly_trend_aligned=True, monthly_trend_aligned=True),
+            SimpleNamespace(confirmed=True, entry_bar_idx=60, weekly_trend_aligned=True, monthly_trend_aligned=True),
+            SimpleNamespace(confirmed=True, entry_bar_idx=130, weekly_trend_aligned=False, monthly_trend_aligned=False),
+        ]
+        with patch("ctl.b1_detector.run_b1_detection") as mock_detect:
+            with patch("ctl.simulator.simulate_trade") as mock_sim:
+                mock_detect.return_value = fake_triggers
+                # First trade exits at 100, second trigger should be skipped
+                # because entry=60 <= 100, third should execute.
+                mock_sim.side_effect = [
+                    SimpleNamespace(exit_bar_idx=100, theoretical_r=1.0),
+                    SimpleNamespace(exit_bar_idx=170, theoretical_r=-0.5),
+                ]
+                result = execute_b1_symbol("ES", tmp_path)
+
+        assert result.status == "EXECUTED"
+        assert result.trigger_count == 2
+        assert result.trade_count == 2
 
     def test_fallback_to_ts_daily_when_continuous_missing(self, tmp_path):
         # No AAPL_continuous.csv; provide TS_AAPL_1D_* fallback file.
@@ -573,8 +603,8 @@ class TestSummarizeRun:
         gate = _make_gate_pass()
 
         summary = summarize_run(plan, gate, [])
-        # Timestamp should be non-empty and look like YYYYMMDD_HHMMSS.
-        assert len(summary.timestamp) == 15
+        # Timestamp should be non-empty and look like YYYYMMDD_HHMMSS_micros.
+        assert len(summary.timestamp) == 22
         assert "_" in summary.timestamp
 
     def test_summary_with_metrics_json_serializable(self):

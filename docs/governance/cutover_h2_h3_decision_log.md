@@ -1930,6 +1930,49 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Run one non-dry v2 portfolio run and persist summary artifact.
   2. Recompute promotion priority under v2 baseline and confirm PL no longer consumes remediation budget.
 
+---
+
+## H.38 — Exit-Aware Re-Trigger Gating + Run Summary Collision Hardening — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Complete strict-path architecture hardening before confluence expansion:
+  1) replace detector-side 60-bar suppression with exit-aware non-overlap gating in execution path,
+  2) prevent same-second run-summary overwrite collisions.
+- **Inputs / Artifacts updated:**
+  - `src/ctl/b1_detector.py`
+    - removed sticky 60-bar in-position suppression logic.
+  - `src/ctl/run_orchestrator.py`
+    - switched from bulk `simulate_all` to sequential `simulate_trade` with exit-aware non-overlap gating.
+    - trigger counts now reflect executed non-overlapping triggers.
+    - default run timestamp now includes microseconds (`%Y%m%d_%H%M%S_%f`) for unique summary filenames.
+  - `tests/unit/test_run_weekly_b1_portfolio.py`
+    - updated simulator patching for sequential simulation flow.
+    - added `test_exit_aware_non_overlap_gating`.
+    - updated auto-timestamp expectation for microsecond format.
+- **Validation:**
+  - `pytest tests/unit/test_run_weekly_b1_portfolio.py tests/unit/test_b1_detector.py tests/unit/test_simulator.py -q` → 102 passed.
+  - Daily vs weekly run check (v2 profile) now diverges as expected:
+    - daily: `ES=1`, `CL=17`, `PL=6` triggers
+    - weekly: `ES=3`, `CL=1`, `PL=2` triggers
+  - Summary filenames now unique within same second:
+    - `20260302_161855_213514_portfolio_run.json`
+    - `20260302_161855_684383_portfolio_run.json`
+- **Decision:**
+  - Approve this as mandatory architecture correctness hardening.
+  - Mark prior equal daily/weekly trigger behavior as resolved bug.
+- **Rationale:**
+  - Non-overlap policy must be tied to real exits, not a fixed bar heuristic.
+  - Timeframe mode must be behaviorally meaningful and auditable.
+  - Run artifacts must be collision-safe for automation.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy rule changes (B1 conditions unchanged).
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions (strict path):**
+  1. Start confluence scaffold phase (feature-only): `%R` + `COT` extraction into run outputs.
+  2. Run ablation report (with/without confluence) before any gating implication.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:

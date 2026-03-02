@@ -453,10 +453,6 @@ def detect_triggers(
     # State: pending trigger being confirmed.
     pending: Optional[B1Trigger] = None
     pending_expiry_idx: int = -1
-    # State: currently in an open position (entry resolved, not yet exited).
-    # The *simulator* tracks exits; here we only suppress re-triggers.
-    in_position: bool = False
-    position_entry_idx: int = -1
 
     for n in range(min_bar, n_bars):
         # --- resolve pending entry first -----------------------------------
@@ -478,8 +474,6 @@ def detect_triggers(
                         pending.entry_date = None
                         pending.entry_price = None
                     triggers.append(pending)
-                    in_position = True
-                    position_entry_idx = pending.entry_bar_idx or n
                     pending = None
                     continue
             elif grace_offset > params.entry_grace_bars:
@@ -492,23 +486,6 @@ def detect_triggers(
         if pending is not None:
             # Still waiting on confirmation — ignore new triggers.
             continue
-        if in_position:
-            # Phase 1a: ignore new triggers while in a position on same
-            # symbol+timeframe.  Position exit is resolved by the simulator;
-            # for detection we conservatively assume the position is still
-            # open.  The simulator will call ``release_position`` to re-enable.
-            # For a pure detector pass, we leave in_position sticky — this
-            # means the detector under-counts triggers when called standalone
-            # without a simulator.  That's acceptable; the combined
-            # detect+simulate pipeline is the canonical path.
-            #
-            # To make the detector usable standalone for trigger *counting*,
-            # we reset in_position after a generous max-hold window (60 bars).
-            if n - position_entry_idx > 60:
-                in_position = False
-            else:
-                continue
-
         # --- evaluate C1-C4 -----------------------------------------------
         if np.isnan(slope20[n]) or np.isnan(ema10[n]) or np.isnan(atr14[n]):
             continue
