@@ -1862,6 +1862,46 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Run PL drift-only refinement on top of `window_combined` candidate to target final `WATCH -> ACCEPT`.
   2. If promoted, lock a new operating profile version and rerun gate scripts.
 
+---
+
+## H.36 — PL Promotion Candidate Achieves ACCEPT (Integrated Optional Path) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Finalize PL drift refinement on top of integrated `window_combined` harmonization and validate promotability with no threshold changes.
+- **Inputs / Artifacts updated:**
+  - `src/ctl/pl_harmonization.py`:
+    - added named regime presets (`legacy`, `yearly_2020_2022`)
+    - added `resolve_pl_regimes(...)`
+  - `scripts/evaluate_promotion_priority.py`:
+    - new `--pl-regime-preset` argument
+    - integrated preset resolution for PL harmonization runs
+  - `tests/unit/test_pl_harmonization.py`:
+    - added regime preset tests
+- **Verification:**
+  - `pytest tests/unit/test_pl_harmonization.py tests/unit/test_promotion_priority.py -q` → 14 passed.
+  - Repro command:
+    - `python scripts/evaluate_promotion_priority.py --json --pl-harmonization window_combined --pl-top-k 5 --pl-regime-preset yearly_2020_2022`
+  - Result:
+    - `PL decision=ACCEPT`
+    - `mean_gap_diff=0.9900`
+    - `mean_drift=4.7828`
+    - `reasons=[]`
+    - ES remains `WATCH` (`mean_drift=7.3289`)
+- **Decision:**
+  - Approve this as the current best PL promotion candidate configuration.
+  - Keep it opt-in until profile lock/versioning step (no silent default behavior change).
+- **Rationale:**
+  - Candidate clears both PL blockers simultaneously while preserving existing policy thresholds.
+  - Explicit preset + command makes candidate reproducible and auditable.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Locked operating profile remains unchanged pending versioned adoption decision.
+- **Next actions:**
+  1. If accepted for cycle promotion, create `operating_profile_v2.yaml` with PL expected status update and candidate metadata notes.
+  2. Re-run `scripts/check_operating_profile.py` against v2 profile before adopting in run workflows.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:

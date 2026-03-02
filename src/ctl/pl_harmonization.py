@@ -33,6 +33,17 @@ DEFAULT_PL_REGIMES: tuple[tuple[str, str, str], ...] = (
     ("post_2024", "2024-01-01", "2026-02-17"),
 )
 
+PL_REGIME_PRESETS: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "legacy": DEFAULT_PL_REGIMES,
+    "yearly_2020_2022": (
+        ("pre_2020", "2018-01-01", "2019-12-31"),
+        ("y2020", "2020-01-01", "2020-12-31"),
+        ("y2021", "2021-01-01", "2021-12-31"),
+        ("y2022", "2022-01-01", "2022-12-31"),
+        ("post_2023", "2023-01-01", "2026-02-17"),
+    ),
+}
+
 
 @dataclass(frozen=True)
 class PLHarmonizationResult:
@@ -42,6 +53,7 @@ class PLHarmonizationResult:
     signed_gap_bias: float
     gap_bias_rows: int
     window_biases: List[dict]
+    regime_preset: str = "legacy"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -56,6 +68,7 @@ def apply_pl_harmonization(
     mode: str = "none",
     top_k: int = 5,
     regimes: Sequence[Tuple[str, str, str]] = DEFAULT_PL_REGIMES,
+    regime_preset: str = "legacy",
 ) -> tuple[pd.DataFrame, List[RollManifestEntry], PLHarmonizationResult]:
     """Apply optional PL harmonization transforms.
 
@@ -109,5 +122,13 @@ def apply_pl_harmonization(
         signed_gap_bias=signed_gap_bias,
         gap_bias_rows=gap_bias_rows,
         window_biases=window_biases,
+        regime_preset=regime_preset,
     )
     return can_out, manifest_out, meta
+
+
+def resolve_pl_regimes(preset: str) -> tuple[tuple[str, str, str], ...]:
+    """Resolve a named PL regime preset into date windows."""
+    if preset not in PL_REGIME_PRESETS:
+        raise ValueError(f"Unknown PL regime preset '{preset}'")
+    return PL_REGIME_PRESETS[preset]

@@ -19,7 +19,12 @@ from ctl.canonical_acceptance import acceptance_from_diagnostics  # noqa: E402
 from ctl.cutover_diagnostics import run_diagnostics  # noqa: E402
 from ctl.operating_profile import discover_ts_custom_file, load_operating_profile  # noqa: E402
 from ctl.parity_prep import load_and_validate  # noqa: E402
-from ctl.pl_harmonization import PL_HARMONIZATION_MODES, apply_pl_harmonization  # noqa: E402
+from ctl.pl_harmonization import (  # noqa: E402
+    PL_HARMONIZATION_MODES,
+    PL_REGIME_PRESETS,
+    apply_pl_harmonization,
+    resolve_pl_regimes,
+)
 from ctl.promotion_priority import (  # noqa: E402
     build_priority_row,
     extract_mtfa_rates,
@@ -43,6 +48,7 @@ def _evaluate_symbol(
     *,
     pl_harmonization_mode: str = "none",
     pl_top_k: int = 5,
+    pl_regime_preset: str = "legacy",
 ):
     cfg = profile.symbol_settings[symbol]
 
@@ -70,6 +76,7 @@ def _evaluate_symbol(
 
     harmonization_meta = None
     if symbol == "PL" and pl_harmonization_mode != "none":
+        regimes = resolve_pl_regimes(pl_regime_preset)
         can_h, manifest_h, harmonization_meta = apply_pl_harmonization(
             can_df,
             manifest,
@@ -77,6 +84,8 @@ def _evaluate_symbol(
             diag.l2.detail_df,
             mode=pl_harmonization_mode,
             top_k=pl_top_k,
+            regimes=regimes,
+            regime_preset=pl_regime_preset,
         )
         diag = run_diagnostics(
             canonical_adj_df=can_h,
@@ -117,6 +126,13 @@ def main() -> None:
         default=5,
         help="Top-K windows for PL window-based harmonization modes",
     )
+    p.add_argument(
+        "--pl-regime-preset",
+        type=str,
+        default="legacy",
+        choices=sorted(PL_REGIME_PRESETS.keys()),
+        help="Named PL drift regime preset for harmonization modes using drift offsets",
+    )
     p.add_argument("--json", action="store_true", dest="json_output")
     args = p.parse_args()
 
@@ -139,6 +155,7 @@ def main() -> None:
             mtfa_rates,
             pl_harmonization_mode=args.pl_harmonization,
             pl_top_k=args.pl_top_k,
+            pl_regime_preset=args.pl_regime_preset,
         )
         rows.append(row)
         if sym == "PL" and meta is not None:

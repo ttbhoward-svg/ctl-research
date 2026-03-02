@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from ctl.pl_harmonization import apply_pl_harmonization  # noqa: E402
+from ctl.pl_harmonization import apply_pl_harmonization, resolve_pl_regimes  # noqa: E402
 from ctl.roll_reconciliation import RollManifestEntry  # noqa: E402
 
 
@@ -115,3 +115,13 @@ class TestApplyPlHarmonization:
         manifest = _manifest()
         with pytest.raises(ValueError, match="Unknown PL harmonization mode"):
             apply_pl_harmonization(can, manifest, ts, _l2_detail(), mode="bad_mode")
+
+
+class TestResolvePlRegimes:
+    def test_known_preset(self):
+        regs = resolve_pl_regimes("legacy")
+        assert len(regs) >= 1
+
+    def test_unknown_preset_raises(self):
+        with pytest.raises(ValueError, match="Unknown PL regime preset"):
+            resolve_pl_regimes("nope")
