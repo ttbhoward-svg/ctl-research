@@ -1015,6 +1015,44 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Keep PL in `WATCH` and prioritize targeted gap/drift diagnostics over broad policy sweeps.
   2. Continue ES drift-focused workstream in parallel and rerun H.17 ranking after each checkpoint.
 
+---
+
+## H.19 — ES Drift Checkpoint + Priority Delta Rerun (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Re-run ES drift-only checkpoint and re-run ES/PL promotion-priority ranking to measure delta after H.18.
+- **Inputs:**
+  - ES diagnostics rerun at locked `max_day_delta=3`
+  - ES candidate tolerance check at `max_day_delta=5`
+  - H.17 ranking script (`scripts/evaluate_promotion_priority.py`)
+- **ES checkpoint result:**
+  - `mdd=3`: `WATCH/WATCH`, acceptance `WATCH`
+    - `n_paired=32`, `n_fail=0`, `mean_gap_diff=0.53125`, `mean_drift=7.328928`
+  - `mdd=5` candidate: identical output and acceptance (`WATCH`)
+  - blocker unchanged: mean drift `7.3289 > 5.0000`
+- **Top ES drift intervals (unchanged):**
+  1. `2025-03-18 -> 2025-06-17` (`7.7222%`)
+  2. `2020-03-16 -> 2020-06-15` (`5.5133%`)
+  3. `2019-12-15 -> 2020-03-16` (`4.1475%`)
+- **Priority rerun delta (H.17 vs H.19):**
+  - No ranking change.
+  - `PL` remains higher priority than `ES`.
+  - Scores unchanged:
+    - `PL = 0.5260 (MEDIUM)`
+    - `ES = 0.2562 (MEDIUM)`
+- **Decision:**
+  - No configuration changes.
+  - Maintain current locked statuses: `ES WATCH`, `PL WATCH`, `CL ACCEPT`.
+  - Treat this as a no-delta checkpoint and continue phased plan.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Continue PL targeted gap/drift diagnostics (interval-level basis investigation) rather than broad sweep.
+  2. Re-run H.17 ranking only after a material data/variant change.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
