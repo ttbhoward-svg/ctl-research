@@ -10,13 +10,14 @@ from typing import Dict, List, Optional
 from ctl.canonical_acceptance import acceptance_from_diagnostics
 from ctl.cutover_diagnostics import run_diagnostics
 from ctl.operating_profile import discover_ts_custom_file
-from ctl.parity_prep import load_and_validate
+from ctl.parity_prep import discover_ts_file, load_and_validate
 from ctl.research_registry import ResearchTickerRegistry
 from ctl.roll_reconciliation import load_roll_manifest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB_CONTINUOUS_DIR = REPO_ROOT / "data" / "processed" / "databento" / "cutover_v1" / "continuous"
 DEFAULT_TS_DIR = REPO_ROOT / "data" / "raw" / "tradestation" / "cutover_v1"
+DEFAULT_NG_DIR = REPO_ROOT / "data" / "raw" / "norgate" / "cutover_v1"
 DEFAULT_RESEARCH_RUN_DIR = REPO_ROOT / "data" / "processed" / "cutover_v1" / "research_runs"
 
 
@@ -126,45 +127,88 @@ def _run_optional_diagnostics(
     max_day_delta: Optional[int],
     db_dir: Path,
     ts_dir: Path,
+    ng_dir: Path,
 ) -> Dict[str, object]:
-    # Need explicit metadata + futures-style files.
-    if tick_size is None or max_day_delta is None:
-        return {"available": False, "status": "SKIP", "note": "missing tick_size/max_day_delta"}
-
+    # Path A: full futures diagnostics (continuous + manifest + TS CUSTOM).
     can_path = db_dir / f"{symbol}_continuous.csv"
     manifest_path = db_dir / f"{symbol}_roll_manifest.json"
-    if not can_path.is_file() or not manifest_path.is_file():
-        return {"available": False, "status": "SKIP", "note": "missing continuous/manifest"}
-
     ts_adj_path = discover_ts_custom_file(symbol, ts_dir, "ADJ")
     ts_unadj_path = discover_ts_custom_file(symbol, ts_dir, "UNADJ")
-    if ts_adj_path is None or ts_unadj_path is None:
-        return {"available": False, "status": "SKIP", "note": "missing TS CUSTOM ADJ/UNADJ"}
+    if (
+        can_path.is_file()
+        and manifest_path.is_file()
+        and ts_adj_path is not None
+        and ts_unadj_path is not None
+    ):
+        if tick_size is None or max_day_delta is None:
+            return {"available": False, "status": "SKIP", "note": "missing tick_size/max_day_delta"}
+        can_df, e0 = _load_ohlcv_with_vol_alias(can_path, f"DB {symbol}")
+        ts_adj_df, e1 = _load_ohlcv_with_vol_alias(ts_adj_path, f"TS {symbol} ADJ")
+        ts_unadj_df, e2 = _load_ohlcv_with_vol_alias(ts_unadj_path, f"TS {symbol} UNADJ")
+        if e0 or e1 or e2:
+            return {"available": False, "status": "ERROR", "note": "; ".join(e0 + e1 + e2)}
 
-    can_df, e0 = _load_ohlcv_with_vol_alias(can_path, f"DB {symbol}")
-    ts_adj_df, e1 = _load_ohlcv_with_vol_alias(ts_adj_path, f"TS {symbol} ADJ")
-    ts_unadj_df, e2 = _load_ohlcv_with_vol_alias(ts_unadj_path, f"TS {symbol} UNADJ")
-    if e0 or e1 or e2:
-        return {"available": False, "status": "ERROR", "note": "; ".join(e0 + e1 + e2)}
+        manifest = load_roll_manifest(manifest_path)
+        diag = run_diagnostics(
+            canonical_adj_df=can_df,
+            ts_adj_df=ts_adj_df,
+            manifest_entries=manifest,
+            ts_unadj_df=ts_unadj_df,
+            symbol=symbol,
+            tick_size=float(tick_size),
+            max_day_delta=int(max_day_delta),
+        )
+        acc = acceptance_from_diagnostics(diag)
+        return {
+            "available": True,
+            "status": f"{diag.strict_status}/{diag.policy_status}",
+            "decision": acc.decision,
+            "mean_gap_diff": float(diag.l3.mean_gap_diff),
+            "mean_drift": float(diag.l4.mean_drift),
+            "note": "; ".join(acc.reasons) if acc.reasons else "",
+        }
 
-    manifest = load_roll_manifest(manifest_path)
-    diag = run_diagnostics(
-        canonical_adj_df=can_df,
-        ts_adj_df=ts_adj_df,
-        manifest_entries=manifest,
-        ts_unadj_df=ts_unadj_df,
-        symbol=symbol,
-        tick_size=float(tick_size),
-        max_day_delta=int(max_day_delta),
-    )
-    acc = acceptance_from_diagnostics(diag)
+    # Path B: non-futures parity-lite diagnostics (TS vs Norgate raw 1D).
+    ts_path = discover_ts_file(symbol, ts_dir)
+    ng_path = Path(ng_dir) / f"NG_{symbol}_1D_20180101_20260218.csv"
+    if ts_path is None or not ng_path.is_file():
+        return {"available": False, "status": "SKIP", "note": "no full diagnostics path; no TS/NG parity-lite files"}
+
+    ts_df, e0 = _load_ohlcv_with_vol_alias(ts_path, f"TS {symbol}")
+    ng_df, e1 = _load_ohlcv_with_vol_alias(ng_path, f"NG {symbol}")
+    if e0 or e1:
+        return {"available": False, "status": "ERROR", "note": "; ".join(e0 + e1)}
+
+    merged = ts_df[["Date", "Close"]].merge(
+        ng_df[["Date", "Close"]],
+        on="Date",
+        suffixes=("_ts", "_ng"),
+    ).dropna()
+    if merged.empty:
+        return {"available": False, "status": "ERROR", "note": "TS/NG overlap empty"}
+
+    abs_diff = (merged["Close_ts"] - merged["Close_ng"]).abs()
+    pct_diff = (abs_diff / merged["Close_ng"].abs().clip(lower=1e-9)) * 100.0
+    mean_drift = float(abs_diff.mean())
+    mean_pct = float(pct_diff.mean())
+
+    if mean_pct <= 3.0:
+        decision = "ACCEPT"
+        status = "LITE/PASS"
+    elif mean_pct <= 10.0:
+        decision = "WATCH"
+        status = "LITE/WATCH"
+    else:
+        decision = "REJECT"
+        status = "LITE/FAIL"
+
     return {
         "available": True,
-        "status": f"{diag.strict_status}/{diag.policy_status}",
-        "decision": acc.decision,
-        "mean_gap_diff": float(diag.l3.mean_gap_diff),
-        "mean_drift": float(diag.l4.mean_drift),
-        "note": "; ".join(acc.reasons) if acc.reasons else "",
+        "status": status,
+        "decision": decision,
+        "mean_gap_diff": None,
+        "mean_drift": mean_drift,
+        "note": f"parity-lite mean_abs_pct_diff={mean_pct:.4f}% n={len(merged)}",
     }
 
 
@@ -173,6 +217,7 @@ def build_research_scorecard(
     batch_summary: dict,
     db_dir: Path = DEFAULT_DB_CONTINUOUS_DIR,
     ts_dir: Path = DEFAULT_TS_DIR,
+    ng_dir: Path = DEFAULT_NG_DIR,
 ) -> List[ResearchScorecardRow]:
     by_symbol = {row.get("symbol"): row for row in _extract_symbol_rows(batch_summary)}
     reg_map = {s.symbol: s for s in registry.symbols}
@@ -188,6 +233,7 @@ def build_research_scorecard(
             max_day_delta=rs.max_day_delta,
             db_dir=db_dir,
             ts_dir=ts_dir,
+            ng_dir=ng_dir,
         )
 
         score = _compute_score(
