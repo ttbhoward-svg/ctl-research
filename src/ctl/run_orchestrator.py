@@ -578,11 +578,28 @@ def execute_b1_symbol(
             detail=f"Insufficient bars ({len(df)} < 50)",
         )
 
+    if timeframe not in {"daily", "weekly"}:
+        return SymbolRunResult(
+            symbol=symbol,
+            status="ERROR",
+            detail=f"Unsupported timeframe: {timeframe}",
+        )
+
     weekly_df = _build_htf_ohlcv(df, "weekly")
     monthly_df = _build_htf_ohlcv(df, "monthly")
 
+    # Detection/simulation cadence must match requested timeframe.
+    detect_df = df if timeframe == "daily" else weekly_df.copy()
+
+    if len(detect_df) < 50:
+        return SymbolRunResult(
+            symbol=symbol,
+            status="SKIPPED",
+            detail=f"Insufficient {timeframe} bars ({len(detect_df)} < 50)",
+        )
+
     triggers = run_b1_detection(
-        df,
+        detect_df,
         symbol,
         timeframe,
         weekly_df=weekly_df,
@@ -599,7 +616,7 @@ def execute_b1_symbol(
     monthly_rate = (monthly_true / monthly_count) if monthly_count else None
     results = simulate_all(
         confirmed,
-        df,
+        detect_df,
         SimConfig(slippage_per_side=slippage_per_side),
     )
 

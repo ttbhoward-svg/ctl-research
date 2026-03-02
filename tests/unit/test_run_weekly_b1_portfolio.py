@@ -384,6 +384,21 @@ class TestExecuteB1Symbol:
         assert len(weekly_df) > 0
         assert len(monthly_df) > 0
 
+    def test_weekly_timeframe_uses_weekly_detection_df(self, tmp_path):
+        _make_ohlcv_csv(tmp_path, "ES", n_bars=260)
+        with patch("ctl.b1_detector.run_b1_detection") as mock_detect:
+            with patch("ctl.simulator.simulate_all") as mock_sim:
+                mock_detect.return_value = []
+                mock_sim.return_value = []
+                _ = execute_b1_symbol("ES", tmp_path, timeframe="weekly")
+
+        assert mock_detect.call_count == 1
+        args, kwargs = mock_detect.call_args
+        detect_df = args[0]
+        weekly_df = kwargs["weekly_df"]
+        assert len(detect_df) == len(weekly_df)
+        assert args[2] == "weekly"
+
     def test_mtfa_metrics_populated_from_confirmed_triggers(self, tmp_path):
         _make_ohlcv_csv(tmp_path, "ES", n_bars=260)
         fake_triggers = [
