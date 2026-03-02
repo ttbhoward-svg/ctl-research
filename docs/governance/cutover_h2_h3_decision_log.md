@@ -1686,6 +1686,57 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Populate registry with next symbol cohort from Phase1a universe and run batch backtests.
   2. Add confidence scorecard output per research symbol (diagnostics + run metrics) for promotion readiness.
 
+---
+
+## H.32 — Research Confidence Scorecard (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Add a research-tier confidence scorecard that combines batch execution metrics with available L2/L3/L4 diagnostics for promotion-readiness tracking.
+- **Inputs / Artifacts added:**
+  - Registry metadata extension:
+    - `configs/cutover/research_ticker_registry_v1.yaml` (`tick_size`, `max_day_delta` for symbols with diagnostics)
+    - `src/ctl/research_registry.py` (loader support for optional diagnostic metadata)
+  - Scorecard module + CLI:
+    - `src/ctl/research_scorecard.py`
+    - `scripts/generate_research_confidence_scorecard.py`
+  - Tests:
+    - `tests/unit/test_research_scorecard.py`
+    - `tests/unit/test_research_registry.py` updates
+  - Mixed-universe execution fix:
+    - `src/ctl/run_orchestrator.py`
+    - `tests/unit/test_run_weekly_b1_portfolio.py` updates
+- **Key behavior:**
+  - Scorecard reads latest research batch results and emits per-symbol confidence rows.
+  - For symbols with diagnostics metadata and required files (e.g., PA), scorecard runs acceptance diagnostics and includes strict/policy/decision + L3/L4 metrics.
+  - For symbols without diagnostics metadata (e.g., AAPL, XLE), scorecard marks execution-only confidence (`diagnostics_status=SKIP`) rather than failing.
+  - Non-futures research symbols now fallback to `TS_{symbol}_1D_*.csv` when `{symbol}_continuous.csv` is absent.
+- **Observed output on latest batch:**
+  - `AAPL`: EXECUTED, confidence `MEDIUM` (execution-only).
+  - `XLE`: EXECUTED, confidence `MEDIUM` (execution-only).
+  - `PA`: EXECUTED but diagnostics `FAIL/FAIL`, decision `REJECT`, confidence `LOW`.
+- **Decision:**
+  - Approve scorecard as the canonical research-tier readiness lens.
+  - Keep all research symbols non-gating; no promotion action taken from this step.
+- **Rationale:**
+  - Enables expansion without losing governance discipline by separating execution health from diagnostics quality.
+  - Prevents misleading confidence for symbols that execute but fail reconciliation diagnostics.
+- **Verification:**
+  - Targeted tests:
+    - `tests/unit/test_research_registry.py`
+    - `tests/unit/test_research_batch.py`
+    - `tests/unit/test_research_scorecard.py`
+    - `tests/unit/test_run_weekly_b1_portfolio.py`
+    - Result: 49 passed
+  - Full suite: `pytest tests/ -q` → 1252 passed.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Add next research cohort from Phase1a universe to registry and batch-run with scorecard review.
+  2. Define explicit promotion criteria from scorecard (minimum execution sample + diagnostic stability windows).
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:

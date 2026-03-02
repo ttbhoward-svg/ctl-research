@@ -24,7 +24,7 @@ def test_load_valid_registry(tmp_path: Path):
             "registry_id": "r1",
             "profile_path": "configs/cutover/operating_profile_v1.yaml",
             "symbols": [
-                {"symbol": "PA", "enabled": True, "slippage_per_side": 0.1},
+                {"symbol": "PA", "enabled": True, "slippage_per_side": 0.1, "tick_size": 0.1, "max_day_delta": 3},
                 {"symbol": "xle", "enabled": False},
             ],
         },
@@ -33,6 +33,8 @@ def test_load_valid_registry(tmp_path: Path):
     assert r.registry_id == "r1"
     assert r.enabled_symbols() == ["PA"]
     assert r.slippage_map() == {"PA": 0.1}
+    assert r.symbols[0].tick_size == 0.1
+    assert r.symbols[0].max_day_delta == 3
 
 
 def test_reject_duplicate_symbol(tmp_path: Path):

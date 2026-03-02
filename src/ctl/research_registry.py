@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import yaml
 
@@ -17,6 +17,8 @@ class ResearchSymbol:
     symbol: str
     enabled: bool = True
     slippage_per_side: float = 0.0
+    tick_size: Optional[float] = None
+    max_day_delta: Optional[int] = None
     notes: str = ""
 
     def to_dict(self) -> dict:
@@ -86,6 +88,8 @@ def load_research_registry(path: Path = DEFAULT_RESEARCH_REGISTRY) -> ResearchTi
                     symbol=sym,
                     enabled=bool(row.get("enabled", True)),
                     slippage_per_side=float(row.get("slippage_per_side", 0.0)),
+                    tick_size=(None if row.get("tick_size") is None else float(row.get("tick_size"))),
+                    max_day_delta=(None if row.get("max_day_delta") is None else int(row.get("max_day_delta"))),
                     notes=str(row.get("notes", "")),
                 )
             )
