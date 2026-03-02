@@ -2117,6 +2117,47 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   2. Keep TS/Norgate as reference/fallback audit sources only.
   3. Rotate Databento API key after historical pull completion (security hygiene).
 
+---
+
+## H.42 — Real COT Source Promotion (Deacot-Derived Commercial Net) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Replace placeholder COT with real CFTC-derived values and re-validate strict full-universe build + research confidence filter behavior.
+- **Inputs:**
+  - Source files: `data/raw/external/cot_legacy/deacot2018.txt` ... `deacot2026.txt`.
+  - Built canonical COT file:
+    - `data/raw/external/cot_phase1a.csv`
+    - schema: `publication_date,symbol,commercial_net`.
+  - Output stats:
+    - 5511 rows, 15 symbols.
+- **Verification:**
+  - `scripts/run_phase1a_strict_build.py`:
+    - `warnings=[]`
+    - `health_all_passed=true`
+    - rows/trades/triggers: `257`
+    - updated dataset hash:
+      - `bc3b0d17448d44e8c56f55181fa1745f8e347abebcd6ccc7332e28203b015bb4`.
+  - Post-promotion research run (`--min-confidence 0.60`):
+    - selected symbols: `ES`, `CL`, `PL`, `AAPL`.
+    - skipped: `PA`, `XLE`.
+    - aggregate behavior stable vs pre-promotion baseline.
+- **Decision:**
+  - Approve real COT promotion for current cycle using deacot-derived commercial-net proxy.
+  - Keep operating profile statuses unchanged:
+    - `ES=WATCH`, `CL=ACCEPT`, `PL=WATCH`.
+- **Rationale:**
+  - Data quality improved materially (placeholder removed) with no regression in strict build integrity or filtered research-run stability.
+  - This unblocks more meaningful COT-feature ablation on daily/weekly baseline.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Run explicit COT/VIX confluence ablation on Databento-primary + real-COT baseline.
+  2. Add deferred item to evaluate Legacy-vs-Disaggregated COT substitution and delta features (post-ablation).
+  3. Rotate Databento API key after run completion.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
