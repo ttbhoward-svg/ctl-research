@@ -1356,6 +1356,336 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Isolate top PL gap-error roll windows and test roll-window-specific corrections offline.
   2. Re-run H.17 ranking only after a candidate materially reduces both gap and drift.
 
+---
+
+## H.26 — Offline PL Roll-Window-Specific Gap Correction (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Evaluate targeted PL L3 correction by applying explicit signed gap offsets to the highest-error L2 matched windows (top-K by absolute signed gap delta).
+- **Inputs:**
+  - New window correction artifacts:
+    - `src/ctl/pl_gap_window_correction.py`
+    - `scripts/evaluate_pl_window_gap_correction.py`
+    - `tests/unit/test_pl_gap_window_correction.py`
+  - Baseline PL diagnostics from locked profile settings (`max_day_delta=2`, current canonical + TS inputs).
+  - Existing H.23 drift-regime correction candidate for combined tests.
+- **Method (offline only):**
+  - From baseline L2 detail, select top-K rows (`status in {PASS, WATCH}`) by `abs(canonical_gap - ts_gap)`.
+  - Build per-window bias map keyed by `(roll_date, from_contract, to_contract)`.
+  - Apply manifest correction: `gap_corrected = gap - signed_gap_delta` for matched windows.
+  - Re-run diagnostics for:
+    1. baseline
+    2. window-gap-only
+    3. combined (window-gap + H.23 drift correction)
+  - K-sensitivity tested at `K in {3, 5, 8, 12}`.
+- **Results (K sweep):**
+  - Baseline: `mean_gap_diff=1.6600`, `mean_drift=8.2821`, decision `WATCH`
+  - `K=3`:
+    - window-gap-only: `gap=1.2000`, `drift=8.2821`
+    - combined: `gap=1.2000`, `drift=5.6209`
+  - `K=5`:
+    - window-gap-only: `gap=0.9900`, `drift=8.2821`
+    - combined: `gap=0.9900`, `drift=5.6209`
+  - `K=8`:
+    - window-gap-only: `gap=0.7233`, `drift=8.2821`
+    - combined: `gap=0.7233`, `drift=5.6209`
+  - `K=12`:
+    - window-gap-only: `gap=0.4500`, `drift=8.2821`
+    - combined: `gap=0.4500`, `drift=5.6209`
+- **Decision:**
+  - Window-specific correction is highly effective on L3 in offline diagnostics but remains research-only.
+  - Do not promote to production/profile in this phase due high overfit risk (explicitly memorizes top historical error windows).
+  - Use this as evidence that residual PL gap error is concentrated and potentially addressable with a generalized, forward-safe correction model.
+- **Rationale:**
+  - Large L3 improvement confirms concentration of mismatch in a small subset of roll windows.
+  - However, explicit top-window offsets are not causal/portable and are likely to leak hindsight into governance decisions.
+  - Promotion criteria require robust, non-memorized behavior suitable for forward operation.
+- **Verification:**
+  - `tests/unit/test_pl_gap_window_correction.py` → 2 passed
+  - Script runs validated for `K=3/5/8/12` (text + JSON behavior)
+  - Full suite: `pytest tests/ -q` → 1235 passed
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Design forward-safe PL gap model from causal features (e.g., roll month, curve shape, liquidity regime) rather than per-window memorization.
+  2. Evaluate walk-forward performance of any generalized gap model before considering profile/governance changes.
+
+---
+
+## H.27 — Offline PL Generalized Gap Model (Walk-Forward) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Test a forward-safe generalized PL gap treatment that avoids per-window memorization by learning month-of-roll signed gap biases from a training window and applying them only out-of-sample.
+- **Inputs:**
+  - New generalized gap artifacts:
+    - `src/ctl/pl_gap_generalized.py`
+    - `scripts/evaluate_pl_generalized_gap_model.py`
+    - `tests/unit/test_pl_gap_generalized.py`
+  - Train/apply split:
+    - train end: `2023-12-31`
+    - apply start: `2024-01-01`
+- **Method (offline only):**
+  - From baseline PL L2 detail rows (`PASS/WATCH` with both gaps), estimate median signed gap delta by `to_contract` month code on training window only.
+  - Apply month bias correction to manifest only for roll dates `>= apply_start`.
+  - Re-run diagnostics and acceptance under locked profile settings.
+- **Learned month biases (train window):**
+  - `F`: median `+1.6000` (n=6)
+  - `J`: median `-0.1500` (n=6)
+  - `N`: median `+0.8000` (n=5)
+  - `V`: median `+0.9000` (n=6)
+- **Results:**
+  - Baseline:
+    - `mean_gap_diff=1.6600`
+    - `mean_drift=8.2821`
+    - decision `WATCH`
+  - Generalized-gap-only:
+    - `mean_gap_diff=1.7300`
+    - `mean_drift=8.2821`
+    - decision `WATCH`
+  - Delta (generalized - baseline):
+    - `mean_gap_diff=+0.0700` (worse)
+    - `mean_drift=+0.0000`
+- **Decision:**
+  - Reject this generalized month-only candidate for promotion; it degrades L3 out-of-sample.
+  - Keep as a negative result in the research record.
+  - Maintain current operating profile unchanged.
+- **Rationale:**
+  - H.26 demonstrated strong in-sample leverage from targeted windows, but H.27 shows simple generalized month biases do not transfer robustly.
+  - A viable forward-safe model likely requires richer causal features than month code alone.
+- **Verification:**
+  - `tests/unit/test_pl_gap_generalized.py` + `tests/unit/test_pl_gap_window_correction.py` → 4 passed
+  - Script output verified in text and JSON modes.
+  - Full suite: `pytest tests/ -q` → 1237 passed.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Build a richer generalized PL gap model candidate (features: roll month, signed basis regime, and local curve state) with strict walk-forward evaluation.
+  2. Continue ES drift-focused promotion path in parallel so portfolio readiness is not blocked by PL-only research.
+
+---
+
+## H.28 — Offline PL Hierarchical Feature Gap Model (Walk-Forward) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Evaluate a richer forward-safe PL gap model using hierarchical feature buckets with fallbacks:
+  - exact: `(regime, roll_month, gap_sign)`
+  - fallback 1: `(regime, roll_month)`
+  - fallback 2: `(roll_month)`
+- **Inputs:**
+  - New feature model artifacts:
+    - `src/ctl/pl_gap_feature_model.py`
+    - `scripts/evaluate_pl_feature_gap_model.py`
+    - `tests/unit/test_pl_gap_feature_model.py`
+  - Train/apply split:
+    - train end: `2023-12-31`
+    - apply start: `2024-01-01`
+  - Min-row sensitivity: `min_rows in {1,2,3}`.
+- **Method (offline only):**
+  - Train hierarchical median signed gap deltas from baseline L2 (`canonical_gap - ts_gap`) on training window.
+  - Apply corrections only to roll dates in out-of-sample window.
+  - Re-run diagnostics under locked profile settings.
+- **Results:**
+  - Baseline: `mean_gap_diff=1.6600`, `mean_drift=8.2821`, decision `WATCH`
+  - Feature model (`min_rows=1`): `mean_gap_diff=1.7300`, `mean_drift=8.2821`, decision `WATCH`
+  - Feature model (`min_rows=2`): `mean_gap_diff=1.7300`, `mean_drift=8.2821`, decision `WATCH`
+  - Feature model (`min_rows=3`): `mean_gap_diff=1.7300`, `mean_drift=8.2821`, decision `WATCH`
+  - Delta vs baseline: `mean_gap_diff=+0.0700` (worse), `mean_drift=+0.0000`.
+- **Decision:**
+  - Reject hierarchical feature candidate for promotion; no out-of-sample L3 improvement.
+  - Maintain current profile unchanged.
+- **Rationale:**
+  - Even richer bucketing did not recover forward-safe gain.
+  - Under this split, post-2024 regime behavior is not captured well by pre-2024 training buckets, and fallback behavior does not improve error.
+  - PL promotion remains blocked on both soft metrics unless a truly causal/portable model is found.
+- **Verification:**
+  - Targeted tests:
+    - `tests/unit/test_pl_gap_feature_model.py`
+    - `tests/unit/test_pl_gap_generalized.py`
+    - `tests/unit/test_pl_gap_window_correction.py`
+    - Result: 7 passed
+  - Full suite: `pytest tests/ -q` → 1240 passed.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Pause PL gap-model promotion attempts pending new causal features/data (e.g., explicit contract microstructure or vendor metadata not currently modeled).
+  2. Shift near-term promotion effort to ES drift reduction where residual distance to threshold is smaller and prior diagnostics are cleaner.
+
+---
+
+## H.29 — ES Drift-Focused Interval Diagnostics + Harmonization Candidate — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Execute ES day-2 drift-focused workflow:
+  1. identify top drift-contributor intervals,
+  2. test one harmonization candidate,
+  3. recompute ES acceptance delta.
+- **Inputs:**
+  - New ES harmonization artifacts:
+    - `src/ctl/es_drift_harmonization.py`
+    - `scripts/evaluate_es_drift_harmonization.py`
+    - `tests/unit/test_es_drift_harmonization.py`
+  - Locked ES profile settings (`max_day_delta=3`, unchanged thresholds).
+- **Top 3 drift contributors (from L4 explanation):**
+  - `2025-03-18 -> 2025-06-17`: mean drift `18.3532`, contribution `7.7222%` (WATCH)
+  - `2020-03-16 -> 2020-06-15`: mean drift `13.1032`, contribution `5.5133%` (WATCH)
+  - `2019-12-15 -> 2020-03-16`: mean drift `10.1803`, contribution `4.1475%` (WATCH)
+- **Harmonization candidate tested (offline only):**
+  - Regime-median signed-diff offsets applied to canonical close:
+    - `pre2020`: `-7.0000`
+    - `2020-2022`: `-1.5000`
+    - `post2023`: `-0.7500`
+- **Results:**
+  - Baseline ES:
+    - decision `WATCH`
+    - `mean_gap_diff=0.5312`
+    - `mean_drift=7.3289`
+  - Harmonized ES (offline):
+    - decision `WATCH`
+    - `mean_gap_diff=0.5312` (unchanged)
+    - `mean_drift=6.1924`
+  - Delta (harmonized - baseline):
+    - `mean_gap_diff=+0.0000`
+    - `mean_drift=-1.1366`
+- **Decision:**
+  - Candidate is directionally positive but insufficient for promotion; ES remains `WATCH`.
+  - Keep as research-only reference; do not modify production canonical series/profile in this step.
+- **Rationale:**
+  - Drift reduction is meaningful and focused on known high-contribution intervals.
+  - Residual drift still exceeds acceptance threshold (`6.1924 > 5.0000`).
+  - Additional causal refinement is required before any profile/governance change.
+- **Verification:**
+  - Targeted tests:
+    - `tests/unit/test_es_drift_harmonization.py`
+    - `tests/unit/test_pl_gap_feature_model.py`
+    - `tests/unit/test_pl_gap_generalized.py`
+    - `tests/unit/test_pl_gap_window_correction.py`
+    - Result: 9 passed
+  - Full suite: `pytest tests/ -q` → 1242 passed.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Test a stricter ES walk-forward harmonization split (train on earlier regime, apply only later regime) to estimate forward robustness of drift reduction.
+  2. If robust improvement remains material, feed updated ES delta into promotion-priority ranking and decide whether ES should stay top remediation target versus PL.
+
+---
+
+## H.30 — ES Strict Walk-Forward Check + Priority Re-rank (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Execute requested sequence:
+  1. strict ES walk-forward harmonization test,
+  2. complete promotion-priority re-rank using ES candidate deltas.
+- **Inputs:**
+  - New walk-forward artifacts:
+    - `src/ctl/es_drift_walkforward.py`
+    - `scripts/evaluate_es_drift_walkforward.py`
+    - `tests/unit/test_es_drift_walkforward.py`
+  - New re-rank script:
+    - `scripts/evaluate_promotion_priority_with_es_candidate.py`
+  - Locked ES/PL baseline diagnostics from current operating profile.
+- **Walk-forward setup (strict):**
+  - Baseline ES: `mean_drift=7.3289`, `mean_gap_diff=0.5312`, decision `WATCH`
+  - `wf_1`: train `2018-01-01..2019-12-31`, apply `2020-01-01..2022-12-31`, offset `-7.0000`
+  - `wf_2`: train `2018-01-01..2022-12-31`, apply `2023-01-01..2026-02-17`, offset `-4.7500`
+- **Walk-forward results:**
+  - `wf_1`:
+    - apply-window mean drift: `7.5685 -> 8.9897` (worse, `+1.4213`)
+    - global mean drift: `7.3289 -> 7.8549` (worse, `+0.5259`)
+  - `wf_2`:
+    - apply-window mean drift: `6.9579 -> 8.0478` (worse, `+1.0899`)
+    - global mean drift: `7.3289 -> 7.7472` (worse, `+0.4183`)
+  - Gap unchanged in both: `0.5312`.
+- **Priority re-rank with ES candidate (best among tested = `wf_2`):**
+  - Baseline ranking:
+    - `PL`: score `0.5260`, decision `WATCH`, drift `8.2821`, gap `1.6600`
+    - `ES`: score `0.2562`, decision `WATCH`, drift `7.3289`, gap `0.5312`
+  - Candidate ranking:
+    - `PL`: score `0.5260` (unchanged)
+    - `ES`: score `0.3022` (worse, due higher candidate drift `7.7472`)
+- **Decision:**
+  - Reject ES walk-forward harmonization candidate; not robust out-of-sample.
+  - Complete step 2 outcome: PL remains the higher-priority remediation target after candidate-aware re-rank.
+- **Rationale:**
+  - In-sample ES drift gains from H.29 do not transfer under strict forward application.
+  - Candidate deltas increase ES drift and urgency score, but still not above PL.
+- **Verification:**
+  - Targeted tests:
+    - `tests/unit/test_es_drift_walkforward.py`
+    - `tests/unit/test_es_drift_harmonization.py`
+    - `tests/unit/test_pl_gap_feature_model.py`
+    - `tests/unit/test_pl_gap_generalized.py`
+    - `tests/unit/test_pl_gap_window_correction.py`
+    - Result: 12 passed
+  - Full suite: `pytest tests/ -q` → 1245 passed.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Return ES to baseline (no harmonization override) and pause ES correction promotion attempts for this cycle.
+  2. Focus next remediation cycle on PL with new causal data/features or accept WATCH operation under current conditional-go governance.
+
+---
+
+## H.31 — Research-Tier Batch Expansion Scaffold (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Add a controlled, non-gating batch pipeline to expand backtesting coverage while keeping the locked cutover operating profile unchanged.
+- **Inputs / Artifacts added:**
+  - Registry config:
+    - `configs/cutover/research_ticker_registry_v1.yaml`
+  - Loader + batch modules:
+    - `src/ctl/research_registry.py`
+    - `src/ctl/research_batch.py`
+  - Batch runner script:
+    - `scripts/run_research_backtests_batch.py`
+  - Unit tests:
+    - `tests/unit/test_research_registry.py`
+    - `tests/unit/test_research_batch.py`
+- **Design decisions:**
+  - Research symbols are registry-driven and explicitly non-gating.
+  - Batch runner performs operating-profile gate check first by default (can be skipped via flag for diagnostics).
+  - Dry-run and JSON output supported for scheduler/automation compatibility.
+  - Real runs persist `*_research_batch.json` summaries under `data/processed/cutover_v1/research_runs/`.
+- **Initial registry contents:**
+  - `PA`, `AAPL`, `XLE` (enabled, slippage defaults 0.0).
+- **Verification:**
+  - Targeted tests:
+    - `tests/unit/test_research_registry.py`
+    - `tests/unit/test_research_batch.py`
+    - Result: 4 passed
+  - Script smoke:
+    - `scripts/run_research_backtests_batch.py --dry-run --json`
+    - Result: gate passed, 3 symbols planned, dry-run statuses emitted.
+  - Full suite: `pytest tests/ -q` → 1249 passed.
+- **Decision:**
+  - Approve research-tier expansion scaffold for immediate use.
+  - Keep gating universe/profile unchanged (`ES WATCH`, `CL ACCEPT`, `PL WATCH`).
+- **Rationale:**
+  - Preserves canonical tracker discipline while unlocking fast expansion for broader spec progress.
+  - Avoids accidental drift by separating research-tier experimentation from gating governance.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Populate registry with next symbol cohort from Phase1a universe and run batch backtests.
+  2. Add confidence scorecard output per research symbol (diagnostics + run metrics) for promotion readiness.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
