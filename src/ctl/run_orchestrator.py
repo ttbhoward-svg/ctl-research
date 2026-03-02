@@ -40,8 +40,9 @@ from ctl.operating_profile import (
     discover_ts_custom_file,
     load_operating_profile,
 )
-from ctl.parity_prep import load_and_validate
+from ctl.parity_prep import discover_ts_file, load_and_validate
 from ctl.roll_reconciliation import load_roll_manifest
+from ctl.universe import TICK_VALUES
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ DEFAULT_TS_DIR = REPO_ROOT / "data" / "raw" / "tradestation" / "cutover_v1"
 DEFAULT_SUMMARY_DIR = (
     REPO_ROOT / "data" / "processed" / "cutover_v1" / "run_summaries"
 )
+FUTURES_ROOTS = {k.lstrip("/") for k in TICK_VALUES}
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +476,7 @@ def _build_htf_ohlcv(
 def execute_b1_symbol(
     symbol: str,
     data_dir: Path,
+    ts_dir: Path = DEFAULT_TS_DIR,
     timeframe: str = "daily",
     slippage_per_side: float = 0.0,
 ) -> SymbolRunResult:
@@ -488,6 +491,9 @@ def execute_b1_symbol(
         Root symbol (e.g. ``"ES"``).
     data_dir : Path
         Directory containing ``{symbol}_continuous.csv``.
+    ts_dir : Path
+        TradeStation directory used as fallback for non-continuous symbols
+        (e.g., equities/ETFs with ``TS_{symbol}_1D_*.csv`` files).
     timeframe : str
         Timeframe label passed to the detector.
     slippage_per_side : float
@@ -498,11 +504,36 @@ def execute_b1_symbol(
     SymbolRunResult with trigger/trade metrics.
     """
     from ctl.b1_detector import run_b1_detection
-    from ctl.parity_prep import load_and_validate
     from ctl.simulator import SimConfig, simulate_all
 
     csv_path = data_dir / f"{symbol}_continuous.csv"
     df, errors = load_and_validate(csv_path, f"B1 {symbol}")
+    if errors and symbol.upper() not in FUTURES_ROOTS:
+        # Fallback path: symbols that do not use continuous files
+        # (e.g., equities/ETFs) can be sourced from TS 1D archive files.
+        ts_path = discover_ts_file(symbol, ts_dir)
+        if ts_path is not None:
+            ts_df, ts_errors = load_and_validate(ts_path, f"TS {symbol}")
+            if ts_errors:
+                # Some TS archive files use Vol (not Volume); support that
+                # alias for research-tier symbols.
+                try:
+                    raw = pd.read_csv(ts_path)
+                    col_map = {c: c.strip().title() for c in raw.columns}
+                    raw = raw.rename(columns=col_map)
+                    if "Vol" in raw.columns and "Volume" not in raw.columns:
+                        raw = raw.rename(columns={"Vol": "Volume"})
+                    required = {"Date", "Open", "High", "Low", "Close", "Volume"}
+                    if required.issubset(set(raw.columns)):
+                        raw["Date"] = pd.to_datetime(raw["Date"], errors="coerce")
+                        raw = raw.dropna(subset=["Date"])
+                        raw = raw.sort_values("Date").drop_duplicates(subset=["Date"]).reset_index(drop=True)
+                        ts_df, ts_errors = raw, []
+                except Exception:
+                    pass
+            if not ts_errors:
+                df, errors = ts_df, []
+
     if errors:
         return SymbolRunResult(
             symbol=symbol,

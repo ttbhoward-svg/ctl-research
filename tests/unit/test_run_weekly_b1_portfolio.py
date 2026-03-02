@@ -422,6 +422,24 @@ class TestExecuteB1Symbol:
         assert result.mtfa_monthly_true == 2
         assert result.mtfa_monthly_rate == 0.6667
 
+    def test_fallback_to_ts_daily_when_continuous_missing(self, tmp_path):
+        # No AAPL_continuous.csv; provide TS_AAPL_1D_* fallback file.
+        dates = pd.bdate_range("2020-01-01", periods=200)
+        df = pd.DataFrame({
+            "Date": dates.strftime("%m/%d/%Y"),
+            "Time": ["17:00"] * len(dates),
+            "Open": np.linspace(100.0, 130.0, len(dates)),
+            "High": np.linspace(101.0, 131.0, len(dates)),
+            "Low": np.linspace(99.0, 129.0, len(dates)),
+            "Close": np.linspace(100.5, 130.5, len(dates)),
+            "Vol": np.full(len(dates), 1000),
+            "Oi": np.full(len(dates), 10000),
+        })
+        (tmp_path / "TS_AAPL_1D_20180101_20260218.csv").write_text(df.to_csv(index=False))
+
+        result = execute_b1_symbol("AAPL", data_dir=tmp_path, ts_dir=tmp_path)
+        assert result.status == "EXECUTED"
+
 
 class TestBuildHtfOhlcv:
     def test_weekly_and_monthly_resample_shape(self, tmp_path):
