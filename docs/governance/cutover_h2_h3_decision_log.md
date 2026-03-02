@@ -1144,6 +1144,57 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Add reference-basis regime split analysis (pre-2020 vs post-2024) for PL signed differences.
   2. Re-run H.17 ranking only after a basis-treatment candidate is validated.
 
+---
+
+## H.22 — PL Signed-Basis Regime Split (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Quantify PL signed-basis behavior by regime (pre-2020 vs post-2024) to determine if a regime-aware basis treatment is a viable candidate.
+- **Inputs:**
+  - Canonical PL continuous vs TS PL ADJ reference.
+  - New regime analyzer artifacts:
+    - `src/ctl/pl_basis_regime.py`
+    - `scripts/analyze_pl_basis_regimes.py`
+    - `tests/unit/test_pl_basis_regime.py`
+- **Method:**
+  - Align canonical and TS ADJ on same dates.
+  - Compute signed basis `close_can - close_ts` per row.
+  - Aggregate split statistics:
+    - `pre_2020`: `2018-01-01 -> 2019-12-31`
+    - `post_2024`: `2024-01-01 -> 2026-02-17`
+- **Findings:**
+  - `pre_2020` (n=504):
+    - median signed diff: `+13.7000`
+    - mean signed diff: `+13.0502`
+    - mean abs diff: `13.0534`
+    - pct canonical above TS: `0.9980`
+  - `post_2024` (n=534):
+    - median signed diff: `-3.4000`
+    - mean signed diff: `-3.0993`
+    - mean abs diff: `8.0637`
+    - pct canonical above TS: `0.2247`
+  - Median signed-diff shift (`post_2024 - pre_2020`): `-17.1000`
+- **Decision:**
+  - Confirm a strong signed-basis regime flip in PL.
+  - Promote “regime-aware basis treatment candidate” to next research step (offline diagnostic only).
+  - Do not alter gating thresholds, acceptance semantics, or production series in this step.
+- **Rationale:**
+  - The sign inversion is too large and persistent to treat as random noise.
+  - A single global offset treatment is likely invalid across regimes.
+  - Regime-aware handling should be evaluated offline before any governance/profile change.
+- **Verification:**
+  - `tests/unit/test_pl_basis_regime.py` → 3 passed
+  - Script outputs verified in text and JSON modes.
+  - Full suite: `pytest tests/ -q` → 1225 passed.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Build an offline PL regime-aware basis correction prototype and measure impact on `mean_gap_diff` and `mean_drift`.
+  2. Re-run H.17 ranking only if prototype shows material improvement without policy changes.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
