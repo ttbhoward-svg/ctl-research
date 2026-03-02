@@ -1094,6 +1094,56 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Investigate late-sample PL interval (`2025-12-28 -> 2026-02-17`) for reference-series basis and potential session/close-type artifacts.
   2. Compare signed-basis regimes across pre-2020 vs post-2024 intervals before proposing any new harmonization candidate.
 
+---
+
+## H.21 — PL Late-Interval Artifact Deep-Dive (Phase Item) — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Test whether the largest PL drift-contribution interval is explained by a simple session/date-shift or close-type artifact.
+- **Interval tested:** `2025-12-28 -> 2026-02-17`
+- **Inputs:**
+  - Canonical PL continuous (`data/processed/databento/cutover_v1/continuous/PL_continuous.csv`)
+  - TS PL custom ADJ/UNADJ references
+  - New deep-dive utilities:
+    - `src/ctl/pl_late_interval.py`
+    - `scripts/deep_dive_pl_late_interval.py`
+    - `tests/unit/test_pl_late_interval.py`
+- **Method:**
+  - Compare canonical vs TS ADJ on:
+    - same-date alignment
+    - shifted alignment (`-1 day`, `+1 day`)
+  - Compare canonical vs TS UNADJ to detect close-type mismatch signal.
+  - Inspect overlap composition (canonical-only vs TS-only dates).
+- **Findings:**
+  - Same-date alignment is better than shifted alignments:
+    - same-day `mean_abs_diff=43.34`, `p95_abs=140.44`
+    - shift `-1d`: `mean_abs_diff=95.12`, `p95_abs=261.56`
+    - shift `+1d`: `mean_abs_diff=101.62`, `p95_abs=260.52`
+  - Canonical vs UNADJ is nearly identical to canonical vs ADJ in this interval (`mean_abs_diff ~44.11` vs `43.34`), so this is not a pure ADJ-vs-UNADJ close-type issue.
+  - Date overlap breakdown:
+    - canonical rows: 45
+    - TS rows: 34
+    - canonical-only dates: 11 (mostly Sundays/holidays), TS-only: 0
+- **Decision:**
+  - Reject the simple session-shift hypothesis for this late interval.
+  - Reject pure close-type mismatch as primary explanation.
+  - Treat the interval as basis/regime behavior requiring targeted reference-basis diagnostics rather than calendar-shift fixes.
+- **Rationale:**
+  - If session shift were primary, ±1 day alignment would reduce absolute error; it materially worsened it.
+  - ADJ/UNADJ parity in error magnitude indicates the large tail is not mainly from adjustment toggle choice.
+- **Verification:**
+  - `tests/unit/test_pl_late_interval.py` → 4 passed
+  - Full suite: `pytest tests/ -q` → 1222 passed
+  - Script output validated in text + JSON modes.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Add reference-basis regime split analysis (pre-2020 vs post-2024) for PL signed differences.
+  2. Re-run H.17 ranking only after a basis-treatment candidate is validated.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
