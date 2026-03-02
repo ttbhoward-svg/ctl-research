@@ -213,6 +213,44 @@ Goal: add all 9 features to the trigger dataset and merge external data for all 
 - [ ] Run Data Health Report: no nulls in critical fields (except COT for non-futures), no future-dated external data
 - [ ] **Time estimate:** 2–3 hours
 
+### Task 7b: COT Multi-Report Alpha Stack (Primary + Secondary Shadow)
+- [ ] **Primary policy (locked):** keep Legacy COT as production primary (`baseline_legacy`).
+- [ ] **Secondary policy (conditional):** run one fusion variant in shadow only if OOS lift is positive by rule:
+  - spread lift > 0
+  - top-tercile avg R lift >= 0
+  - score-R correlation lift >= -0.01
+- [ ] Build and maintain source overlays:
+  - [ ] `legacy_futures_only` -> canonical `cot_phase1a_legacy.csv`
+  - [ ] `disaggregated_futures_only` -> canonical `cot_phase1a_disagg.csv`
+  - [ ] `tff_futures_only` -> canonical `cot_phase1a_tff.csv`
+- [ ] Build trigger-aligned fusion features (strict lag, futures-only):
+  - [ ] agreement/disagreement metrics
+  - [ ] dispersion metrics
+  - [ ] fusion candidates: mean, median, shrink, consensus
+- [ ] Evaluate ablations on locked IS/OOS boundaries:
+  - [ ] baseline_legacy
+  - [ ] fusion_mean
+  - [ ] fusion_median
+  - [ ] fusion_shrink
+  - [ ] fusion_consensus
+- [ ] Produce regime slice report (at minimum low-vol vs high-vol via `VIX_Regime`) for each variant.
+- [ ] Persist tracking config:
+  - [ ] `configs/cutover/cot_tracking_v1.yaml` with `primary_variant` and optional `secondary_variant`.
+- [ ] **Advanced build path (approved for future tasks):**
+  - [ ] COT state model: level + velocity + acceleration + crowding + cross-report disagreement
+  - [ ] term-structure x COT interaction features
+  - [ ] extreme-event templates (continuation vs reversal)
+  - [ ] cross-asset relative COT spreads (e.g., GC/SI, CL complex)
+  - [ ] walk-forward Bayesian weighting of source variants by symbol
+  - [ ] meta-labeling layer for take/skip/size modulation (no gate authority until validated)
+  - [ ] stability controls: drift alerts, turnover penalty, IC decay monitoring
+  - [ ] position-sizing hooks (R-modulation) after OOS validation
+- [ ] **Success criteria (Task 7b):**
+  - [ ] Legacy remains stable primary with no health-check regressions.
+  - [ ] At least one fusion variant tracked in shadow with documented OOS lift.
+  - [ ] No threshold changes and no strategy-logic semantic changes in primary gate path.
+- [ ] **Time estimate:** 4–8 hours initial scaffold + ongoing incremental research.
+
 ### Task 8: Final Database Assembly, Health Check & Unit Tests
 - [ ] Merge all sources: triggers + confluence + MTFA + COT (both features) + VIX
 - [ ] Assign AssetCluster label to each trigger using 11-cluster taxonomy:

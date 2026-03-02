@@ -26,10 +26,12 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 # Ensure src/ is importable.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
+import yaml  # noqa: E402
 
 from ctl.operating_profile import load_operating_profile  # noqa: E402
 from ctl.ops_notifier import (  # noqa: E402
@@ -63,6 +65,10 @@ DEFAULT_SUMMARY_DIR = (
     REPO_ROOT / "data" / "processed" / "cutover_v1" / "run_summaries"
 )
 DEFAULT_RETENTION_DAYS = 45
+DEFAULT_COT_TRACKING = REPO_ROOT / "configs" / "cutover" / "cot_tracking_v1.yaml"
+DEFAULT_COT_ABLATION = (
+    REPO_ROOT / "data" / "processed" / "cutover_v1" / "analysis" / "cot_fusion_ablation_latest.json"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +151,44 @@ def _safe_dispatch(
                               level=level, meta=meta)
     except Exception:
         logger.warning("Notification dispatch failed; continuing.", exc_info=True)
+
+
+def _load_cot_tracking_snapshot(
+    tracking_path: Path = DEFAULT_COT_TRACKING,
+    ablation_path: Path = DEFAULT_COT_ABLATION,
+) -> Optional[dict]:
+    """Load current COT primary/secondary tracking snapshot for ops visibility."""
+    if not tracking_path.exists():
+        return None
+    try:
+        tracking = yaml.safe_load(tracking_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        logger.warning("Failed reading COT tracking config: %s", tracking_path, exc_info=True)
+        return None
+
+    out = {
+        "primary_source": tracking.get("primary_source"),
+        "primary_variant": tracking.get("primary_variant"),
+        "secondary_variant": tracking.get("secondary_variant"),
+        "secondary_enabled": bool(tracking.get("secondary_enabled", False)),
+        "secondary_disable_reason": tracking.get("secondary_disable_reason"),
+    }
+
+    if ablation_path.exists():
+        try:
+            ab = json.loads(ablation_path.read_text(encoding="utf-8"))
+            variants = {v.get("variant"): v for v in ab.get("variants", [])}
+            sec = out["secondary_variant"]
+            if sec and sec in variants:
+                v = variants[sec]
+                out["secondary_lifts"] = {
+                    "lift_corr_vs_baseline": v.get("lift_corr_vs_baseline"),
+                    "lift_spread_vs_baseline": v.get("lift_spread_vs_baseline"),
+                    "lift_top_r_vs_baseline": v.get("lift_top_r_vs_baseline"),
+                }
+        except Exception:
+            logger.warning("Failed reading COT ablation snapshot: %s", ablation_path, exc_info=True)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +289,9 @@ def run_weekly_ops(
             "pruned_ops": pruned_ops,
         },
     }
+    cot_tracking = _load_cot_tracking_snapshot()
+    if cot_tracking is not None:
+        ops_result["cot_tracking"] = cot_tracking
 
     save_ops_log(ops_result, ops_log_dir)
 

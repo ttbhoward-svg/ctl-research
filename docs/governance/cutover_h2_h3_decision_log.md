@@ -2158,6 +2158,77 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   2. Add deferred item to evaluate Legacy-vs-Disaggregated COT substitution and delta features (post-ablation).
   3. Rotate Databento API key after run completion.
 
+## H.43 — COT Multi-Report Fusion Track Added to Core Spec — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Promote COT fusion research from ad-hoc exploration into explicit Phase 1a tracker scope while preserving gate stability.
+- **Inputs:**
+  - COT source overlays benchmarked:
+    - `legacy` (recommended primary)
+    - `disagg`
+    - `tff`
+  - Fusion ablation variants evaluated against baseline:
+    - `fusion_mean`, `fusion_median`, `fusion_shrink`, `fusion_consensus`
+  - Current tracking config:
+    - `configs/cutover/cot_tracking_v1.yaml`
+- **Decision:**
+  - Keep `baseline_legacy` as **primary** COT path.
+  - Enable `fusion_mean` as **secondary shadow** variant (no gate authority).
+  - Add new Task `7b` to the canonical tracker:
+    - `docs/governance/CTL_Phase1a_Project_Tracker_v3.md`
+  - Approve advanced COT alpha stack as in-scope follow-on under Task 7b with explicit validation guardrails.
+- **Rationale:**
+  - Fusion shows incremental lift on current OOS slice but not enough to displace stable primary path.
+  - Shadow-tracking captures upside while preserving operational robustness and governance consistency.
+- **Gate impact:**
+  - No threshold changes.
+  - No strategy-logic changes to the primary path.
+  - Operating profile unchanged (`ES=WATCH`, `CL=ACCEPT`, `PL=WATCH`).
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Refresh fusion ablation and regime report on each data-refresh cycle.
+  2. Keep primary/secondary tracking policy in `configs/cutover/cot_tracking_v1.yaml`.
+  3. Promote secondary only after repeated OOS lift and formal gate approval.
+
+## H.44 — COT Stack Automation + Secondary Guardrails + State Model Kickoff — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Operationalize the full COT stack refresh, expose primary/secondary status in ops output, add guardrails for secondary drift, and start first-pass state-model COT feature research.
+- **Inputs:**
+  - Source/fusion scripts from H.43.
+  - Current tracking policy (`legacy` primary, `fusion_mean` secondary shadow).
+- **Decision:**
+  - Add one-command refresh orchestrator:
+    - `scripts/run_cot_stack_refresh.py`
+  - Keep `legacy` primary.
+  - Keep `fusion_mean` secondary shadow while guardrails remain green.
+  - Add guardrail rule:
+    - disable secondary if either condition persists for two consecutive refreshes:
+      1. spread lift < 0, or
+      2. corr lift < -0.02.
+  - Add first-pass state-model scripts:
+    - `scripts/build_cot_state_features.py`
+    - `scripts/evaluate_cot_state_ablation.py`
+- **Verification:**
+  - `scripts/run_cot_stack_refresh.py --json` completes and writes timestamped summary artifact.
+  - `scripts/run_weekly_ops.py --dry-run --notify none --json` includes `cot_tracking` block.
+  - unit tests: `tests/unit/test_run_weekly_ops.py` and `tests/unit/test_ops_notifier.py` pass.
+- **Rationale:**
+  - Keeps research and operations synchronized with minimal manual steps.
+  - Enables safer secondary tracking via automatic drift guardrails.
+  - Starts advanced COT alpha path without changing primary gate semantics.
+- **Gate impact:**
+  - No threshold changes.
+  - No primary strategy-logic changes.
+  - Operating profile unchanged (`ES=WATCH`, `CL=ACCEPT`, `PL=WATCH`).
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions:**
+  1. Monitor secondary guardrail history across multiple refresh cycles.
+  2. Promote state-model variant only if it beats `fusion_mean` on repeated OOS runs.
+  3. Continue strict-path build sequence with primary path unchanged.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:

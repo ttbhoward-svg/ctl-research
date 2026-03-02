@@ -1,0 +1,7 @@
+version: cot_tracking_v1
+primary_source: legacy
+primary_variant: baseline_legacy
+secondary_variant: fusion_mean
+secondary_enabled: true
+selection_rule: positive_lift requires spread_lift>0, top_r_lift>=0, corr_lift>=-0.01
+secondary_disable_reason: null
