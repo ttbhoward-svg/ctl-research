@@ -176,7 +176,13 @@ def _check_cot_rules(df: pd.DataFrame, universe: Universe) -> List[CheckResult]:
     futures = set(universe.futures())
     non_futures = set(universe.equities_and_etfs())
 
-    for col in ("COT_20D_Delta", "COT_ZScore_1Y"):
+    for col in (
+        "COT_Commercial_Pctile_3yr",
+        "COT_Commercial_Zscore_1yr",
+        "COT_Structural_Extreme_5yr",
+        "COT_20D_Delta",
+        "COT_ZScore_1Y",
+    ):
         if col not in df.columns:
             checks.append(CheckResult(f"cot_rules_{col}", True, "column not in dataset (OK if no COT data)"))
             continue

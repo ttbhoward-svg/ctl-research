@@ -1,8 +1,13 @@
 """COT (Commitments of Traders) data loader for Phase 1a.
 
-Loads pre-processed CFTC COT data and computes two features per futures symbol:
-  - COT_20D_Delta: 4-week change in commercial net position (~20 trading days)
-  - COT_ZScore_1Y: z-score of commercial net position over trailing 52 weeks
+Loads pre-processed CFTC COT data and computes canonical tracker features:
+  - COT_Commercial_Pctile_3yr      (trailing 156-week percentile)
+  - COT_Commercial_Zscore_1yr      (trailing 52-week z-score)
+  - COT_Structural_Extreme_5yr     (near 5-year high/low boolean)
+
+Backward-compatible aliases are also emitted:
+  - cot_zscore_1y  (same values as cot_commercial_zscore_1yr)
+  - cot_20d_delta  (legacy 4-week delta feature)
 
 Only applicable to futures symbols. ETFs and equities have no COT data.
 See docs/notes/Task7_assumptions.md for data source expectations and lag rules.
@@ -24,6 +29,8 @@ _DELTA_WEEKS = 4
 
 # Trailing window for z-score (52 weeks = 1 year).
 _ZSCORE_WINDOW = 52
+_PCTILE_WINDOW = 156
+_EXTREME_WINDOW = 260
 
 
 def load_cot_csv(path: Path) -> pd.DataFrame:
@@ -60,8 +67,14 @@ def load_cot_csv(path: Path) -> pd.DataFrame:
     return df
 
 
+def _rolling_percentile_rank_last(values: pd.Series) -> float:
+    """Percentile rank of last value within the window, in [0, 1]."""
+    last = values.iloc[-1]
+    return float((values <= last).mean())
+
+
 def compute_cot_features(raw: pd.DataFrame) -> pd.DataFrame:
-    """Compute COT_20D_Delta and COT_ZScore_1Y from raw commercial net positions.
+    """Compute canonical and legacy COT features from commercial net positions.
 
     Parameters
     ----------
@@ -72,12 +85,15 @@ def compute_cot_features(raw: pd.DataFrame) -> pd.DataFrame:
     -------
     pd.DataFrame
         Columns: publication_date, symbol, commercial_net,
-        cot_20d_delta (float or NaN), cot_zscore_1y (float or NaN).
+        cot_commercial_pctile_3yr (float or NaN),
+        cot_commercial_zscore_1yr (float or NaN),
+        cot_structural_extreme_5yr (bool or NaN),
+        plus backward-compatible aliases.
         Sorted by (symbol, publication_date).
     """
     df = raw.sort_values(["symbol", "publication_date"]).copy()
 
-    # 4-week delta per symbol.
+    # Legacy 4-week delta per symbol (~20 trading days).
     df["cot_20d_delta"] = df.groupby("symbol")["commercial_net"].diff(periods=_DELTA_WEEKS)
 
     # 52-week rolling z-score per symbol.
@@ -90,8 +106,33 @@ def compute_cot_features(raw: pd.DataFrame) -> pd.DataFrame:
     )
     # Avoid division by zero: where std is 0 or NaN, z-score is NaN.
     with np.errstate(divide="ignore", invalid="ignore"):
-        df["cot_zscore_1y"] = (df["commercial_net"] - roll_mean) / roll_std
-    df.loc[roll_std == 0, "cot_zscore_1y"] = np.nan
+        z = (df["commercial_net"] - roll_mean) / roll_std
+    z.loc[roll_std == 0] = np.nan
+    df["cot_commercial_zscore_1yr"] = z
+    # Backward-compatible alias used by older consumers/tests.
+    df["cot_zscore_1y"] = z
+
+    # 3-year rolling percentile of commercial net (structural feature).
+    df["cot_commercial_pctile_3yr"] = df.groupby("symbol")["commercial_net"].transform(
+        lambda s: s.rolling(window=_PCTILE_WINDOW, min_periods=_PCTILE_WINDOW).apply(
+            _rolling_percentile_rank_last,
+            raw=False,
+        )
+    )
+
+    # 5-year structural extreme flag: near rolling min/max in 5-year window.
+    roll_min_5y = df.groupby("symbol")["commercial_net"].transform(
+        lambda s: s.rolling(window=_EXTREME_WINDOW, min_periods=_EXTREME_WINDOW).min()
+    )
+    roll_max_5y = df.groupby("symbol")["commercial_net"].transform(
+        lambda s: s.rolling(window=_EXTREME_WINDOW, min_periods=_EXTREME_WINDOW).max()
+    )
+    near_low = (df["commercial_net"] - roll_min_5y).abs() <= 1e-12
+    near_high = (df["commercial_net"] - roll_max_5y).abs() <= 1e-12
+    df["cot_structural_extreme_5yr"] = (near_low | near_high).where(
+        roll_min_5y.notna() & roll_max_5y.notna(),
+        np.nan,
+    )
 
     df = df.reset_index(drop=True)
     logger.info("Computed COT features: %d rows with valid delta", df["cot_20d_delta"].notna().sum())

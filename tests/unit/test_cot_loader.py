@@ -145,5 +145,24 @@ class TestComputeCotFeatures:
         df = _make_cot_raw(n_weeks=10)
         result = compute_cot_features(df)
         expected_cols = {"publication_date", "symbol", "commercial_net",
-                         "cot_20d_delta", "cot_zscore_1y"}
+                         "cot_20d_delta", "cot_zscore_1y",
+                         "cot_commercial_pctile_3yr", "cot_commercial_zscore_1yr",
+                         "cot_structural_extreme_5yr"}
         assert set(result.columns) == expected_cols
+
+    def test_canonical_zscore_alias_matches_legacy(self):
+        df = _make_cot_raw(n_weeks=60)
+        result = compute_cot_features(df)
+        a = result["cot_zscore_1y"]
+        b = result["cot_commercial_zscore_1yr"]
+        assert a.equals(b)
+
+    def test_3yr_percentile_needs_156_weeks(self):
+        df = _make_cot_raw(n_weeks=120)
+        result = compute_cot_features(df)
+        assert result["cot_commercial_pctile_3yr"].isna().all()
+
+    def test_5yr_extreme_needs_260_weeks(self):
+        df = _make_cot_raw(n_weeks=200)
+        result = compute_cot_features(df)
+        assert result["cot_structural_extreme_5yr"].isna().all()

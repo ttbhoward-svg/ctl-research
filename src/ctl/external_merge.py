@@ -26,18 +26,32 @@ logger = logging.getLogger(__name__)
 
 def _build_cot_lookup(
     cot_features: pd.DataFrame,
-) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+) -> Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
     """Pre-index COT features per symbol for fast date lookup.
 
     Returns dict of symbol -> (dates, deltas, zscores) as sorted numpy arrays.
     """
-    lookup: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    lookup: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
     for sym, grp in cot_features.groupby("symbol"):
         g = grp.sort_values("publication_date")
+        pct = (
+            g["cot_commercial_pctile_3yr"].values.astype(float)
+            if "cot_commercial_pctile_3yr" in g.columns
+            else np.full(len(g), np.nan)
+        )
+        ext = (
+            g["cot_structural_extreme_5yr"].astype(object).map(
+                lambda x: np.nan if pd.isna(x) else (1.0 if bool(x) else 0.0)
+            ).values.astype(float)
+            if "cot_structural_extreme_5yr" in g.columns
+            else np.full(len(g), np.nan)
+        )
         lookup[sym] = (
             g["publication_date"].values,
             g["cot_20d_delta"].values.astype(float),
             g["cot_zscore_1y"].values.astype(float),
+            pct,
+            ext,
         )
     return lookup
 
@@ -62,7 +76,7 @@ def _build_vix_lookup(
 def lookup_cot(
     symbol: str,
     trigger_date: pd.Timestamp,
-    cot_lookup: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]],
+    cot_lookup: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
 ) -> Tuple[Optional[float], Optional[float]]:
     """Find most recent COT features published STRICTLY BEFORE trigger_date.
 
@@ -71,7 +85,7 @@ def lookup_cot(
     if symbol not in cot_lookup:
         return None, None
 
-    dates, deltas, zscores = cot_lookup[symbol]
+    dates, deltas, zscores, _, _ = cot_lookup[symbol]
     # searchsorted with side='left' gives the index where trigger_date would be
     # inserted to keep order.  idx-1 is the last date < trigger_date.
     idx = int(np.searchsorted(dates, np.datetime64(trigger_date), side="left")) - 1
@@ -84,6 +98,29 @@ def lookup_cot(
         None if np.isnan(delta) else float(delta),
         None if np.isnan(zscore) else float(zscore),
     )
+
+
+def lookup_cot_canonical(
+    symbol: str,
+    trigger_date: pd.Timestamp,
+    cot_lookup: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
+) -> Tuple[Optional[float], Optional[float], Optional[bool]]:
+    """Find canonical COT features published STRICTLY BEFORE trigger_date."""
+    if symbol not in cot_lookup:
+        return None, None, None
+
+    dates, _, _, pctiles, extremes = cot_lookup[symbol]
+    idx = int(np.searchsorted(dates, np.datetime64(trigger_date), side="left")) - 1
+    if idx < 0:
+        return None, None, None
+
+    pct = pctiles[idx]
+    ext = extremes[idx]
+    pct_val = None if np.isnan(pct) else float(pct)
+    ext_val = None if np.isnan(ext) else bool(ext == 1.0)
+    # canonical z-score mirrors lookup_cot legacy z-score selection.
+    _, z = lookup_cot(symbol, trigger_date, cot_lookup)
+    return pct_val, z, ext_val
 
 
 def lookup_vix(
@@ -139,8 +176,14 @@ def merge_external_features(
         sym_info = universe.symbols.get(trig.symbol)
         if sym_info is not None and sym_info.is_future and cot_lookup:
             delta, zscore = lookup_cot(trig.symbol, trig.trigger_date, cot_lookup)
+            pct3y, z1y, extreme5y = lookup_cot_canonical(
+                trig.symbol, trig.trigger_date, cot_lookup
+            )
             trig.cot_20d_delta = delta
             trig.cot_zscore_1y = zscore
+            trig.cot_commercial_pctile_3yr = pct3y
+            trig.cot_commercial_zscore_1yr = z1y
+            trig.cot_structural_extreme_5yr = extreme5y
             if delta is not None:
                 n_cot += 1
         # Non-futures: leave as None (structurally expected).

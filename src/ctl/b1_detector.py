@@ -95,6 +95,9 @@ class B1Trigger:
     # External features (Task 7) — set by external_merge, not by detector
     cot_20d_delta: Optional[float] = None
     cot_zscore_1y: Optional[float] = None
+    cot_commercial_pctile_3yr: Optional[float] = None
+    cot_commercial_zscore_1yr: Optional[float] = None
+    cot_structural_extreme_5yr: Optional[bool] = None
     vix_regime: Optional[bool] = None
 
 

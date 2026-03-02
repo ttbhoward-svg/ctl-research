@@ -18,6 +18,7 @@ from ctl.external_merge import (
     _build_cot_lookup,
     _build_vix_lookup,
     lookup_cot,
+    lookup_cot_canonical,
     lookup_vix,
     merge_external_features,
 )
@@ -149,6 +150,21 @@ class TestCOTLookup:
         assert delta is None
         assert zscore is None
 
+    def test_canonical_lookup_fields(self):
+        cot = _make_cot_features(
+            dates=pd.to_datetime(["2024-06-07"]),
+            deltas=[100.0],
+            zscores=[0.5],
+        )
+        cot["cot_commercial_pctile_3yr"] = [0.8]
+        cot["cot_commercial_zscore_1yr"] = [0.5]
+        cot["cot_structural_extreme_5yr"] = [True]
+        lookup = _build_cot_lookup(cot)
+        pct, z, ex = lookup_cot_canonical("/ES", pd.Timestamp("2024-06-14"), lookup)
+        assert pct == 0.8
+        assert z == 0.5
+        assert ex is True
+
 
 # ---------------------------------------------------------------------------
 # Tests: VIX lookup
@@ -262,6 +278,7 @@ class TestMergeIntegration:
         result = merge_external_features([trig], cot, vix, universe)
         assert result[0].cot_20d_delta is not None
         assert result[0].cot_zscore_1y is not None
+        assert result[0].cot_commercial_zscore_1yr is not None
         assert result[0].vix_regime is not None
 
     def test_etf_gets_no_cot(self, universe):
@@ -272,6 +289,8 @@ class TestMergeIntegration:
         result = merge_external_features([trig], cot, vix, universe)
         assert result[0].cot_20d_delta is None
         assert result[0].cot_zscore_1y is None
+        assert result[0].cot_commercial_pctile_3yr is None
+        assert result[0].cot_structural_extreme_5yr is None
         # VIX still applies.
         assert result[0].vix_regime is not None
 
@@ -308,8 +327,14 @@ class TestMergeIntegration:
         trig = _make_trigger()
         assert hasattr(trig, "cot_20d_delta")
         assert hasattr(trig, "cot_zscore_1y")
+        assert hasattr(trig, "cot_commercial_pctile_3yr")
+        assert hasattr(trig, "cot_commercial_zscore_1yr")
+        assert hasattr(trig, "cot_structural_extreme_5yr")
         assert hasattr(trig, "vix_regime")
         # Defaults are None.
         assert trig.cot_20d_delta is None
         assert trig.cot_zscore_1y is None
+        assert trig.cot_commercial_pctile_3yr is None
+        assert trig.cot_commercial_zscore_1yr is None
+        assert trig.cot_structural_extreme_5yr is None
         assert trig.vix_regime is None

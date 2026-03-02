@@ -60,6 +60,9 @@ SCHEMA_COLUMNS = [
     "WeeklyTrendAligned",
     "MonthlyTrendAligned",
     # External data (Task 7)
+    "COT_Commercial_Pctile_3yr",
+    "COT_Commercial_Zscore_1yr",
+    "COT_Structural_Extreme_5yr",
     "COT_20D_Delta",
     "COT_ZScore_1Y",
     "VIX_Regime",
@@ -163,6 +166,9 @@ def assemble_dataset(
             "WeeklyTrendAligned": trig.weekly_trend_aligned if trig else None,
             "MonthlyTrendAligned": trig.monthly_trend_aligned if trig else None,
             # External data (from trigger, set by external_merge)
+            "COT_Commercial_Pctile_3yr": trig.cot_commercial_pctile_3yr if trig else None,
+            "COT_Commercial_Zscore_1yr": trig.cot_commercial_zscore_1yr if trig else None,
+            "COT_Structural_Extreme_5yr": trig.cot_structural_extreme_5yr if trig else None,
             "COT_20D_Delta": trig.cot_20d_delta if trig else None,
             "COT_ZScore_1Y": trig.cot_zscore_1y if trig else None,
             "VIX_Regime": trig.vix_regime if trig else None,

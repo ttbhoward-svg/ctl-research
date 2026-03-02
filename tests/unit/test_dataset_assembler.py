@@ -50,6 +50,9 @@ def _make_trigger(
     monthly_aligned: bool = None,
     cot_delta: float = None,
     cot_zscore: float = None,
+    cot_pctile_3yr: float = None,
+    cot_zscore_1yr_canonical: float = None,
+    cot_extreme_5yr: bool = None,
     vix: bool = True,
 ) -> B1Trigger:
     rng = swing - stop
@@ -85,6 +88,9 @@ def _make_trigger(
     t.monthly_trend_aligned = monthly_aligned
     t.cot_20d_delta = cot_delta
     t.cot_zscore_1y = cot_zscore
+    t.cot_commercial_pctile_3yr = cot_pctile_3yr
+    t.cot_commercial_zscore_1yr = cot_zscore_1yr_canonical
+    t.cot_structural_extreme_5yr = cot_extreme_5yr
     t.vix_regime = vix
     return t
 
@@ -171,10 +177,20 @@ class TestAssembleDataset:
         assert row["MonthlyTrendAligned"] == False   # noqa: E712
 
     def test_external_features_carried(self, universe):
-        trig = _make_trigger(cot_delta=500.0, cot_zscore=1.2, vix=True)
+        trig = _make_trigger(
+            cot_delta=500.0,
+            cot_zscore=1.2,
+            cot_pctile_3yr=0.77,
+            cot_zscore_1yr_canonical=1.2,
+            cot_extreme_5yr=True,
+            vix=True,
+        )
         result = _make_result()
         df = assemble_dataset([trig], [result], universe)
         row = df.iloc[0]
+        assert row["COT_Commercial_Pctile_3yr"] == 0.77
+        assert row["COT_Commercial_Zscore_1yr"] == 1.2
+        assert row["COT_Structural_Extreme_5yr"] == True  # noqa: E712
         assert row["COT_20D_Delta"] == 500.0
         assert row["COT_ZScore_1Y"] == 1.2
         assert row["VIX_Regime"] == True  # noqa: E712

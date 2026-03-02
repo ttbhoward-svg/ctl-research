@@ -1973,6 +1973,67 @@ python scripts/run_weekly_ops.py --retention-days 30 --notify stdout
   1. Start confluence scaffold phase (feature-only): `%R` + `COT` extraction into run outputs.
   2. Run ablation report (with/without confluence) before any gating implication.
 
+---
+
+## H.39 — Strict Tracker Alignment: Task 7 Canonical External Features + Task 8 Immutable Dataset Builder — 2026-03-02
+
+### Decision Entry — 2026-03-02
+
+- **Scope:** Follow tracker strictly after H.38 by completing Task 7 canonical external feature schema and Task 8 immutable dataset assembly pipeline wiring.
+- **Tracker mapping:**
+  - `Task 7` (COT + VIX integration): canonical COT features added with strict lag semantics.
+  - `Task 8` (final DB assembly + health checks + immutable artifact): added dedicated build script that assembles dataset, runs health checks, and writes hash-manifested artifact.
+- **Inputs / Artifacts updated:**
+  - `src/ctl/cot_loader.py`
+    - Added canonical fields:
+      - `cot_commercial_pctile_3yr` (156-week rolling percentile)
+      - `cot_commercial_zscore_1yr` (52-week rolling z-score)
+      - `cot_structural_extreme_5yr` (260-week near-min/max boolean)
+    - Kept backward-compatible aliases:
+      - `cot_zscore_1y`
+      - `cot_20d_delta`
+  - `src/ctl/b1_detector.py`
+    - Added trigger fields for canonical COT features.
+  - `src/ctl/external_merge.py`
+    - Added canonical lookup path and merge assignment:
+      - `lookup_cot_canonical(...)`
+      - sets canonical + legacy COT fields on triggers.
+  - `src/ctl/dataset_assembler.py`
+    - Added canonical Task-7 columns to immutable schema:
+      - `COT_Commercial_Pctile_3yr`
+      - `COT_Commercial_Zscore_1yr`
+      - `COT_Structural_Extreme_5yr`
+    - legacy columns retained for backward compatibility.
+  - `src/ctl/health_check.py`
+    - COT rule checks expanded to canonical columns.
+  - `scripts/build_phase1a_dataset.py` (new)
+    - End-to-end builder:
+      - loads OHLCV (continuous with TS fallback),
+      - runs detection + exit-aware simulation,
+      - merges external features with strict no-lookahead,
+      - assembles canonical dataset,
+      - runs health checks,
+      - saves immutable CSV + SHA-256 manifest.
+  - Tests:
+    - `tests/unit/test_cot_loader.py`
+    - `tests/unit/test_external_merge.py`
+    - `tests/unit/test_dataset_assembler.py`
+- **Verification:**
+  - `pytest tests/unit/test_cot_loader.py tests/unit/test_external_merge.py tests/unit/test_dataset_assembler.py tests/unit/test_b1_detector.py -q` → 90 passed.
+  - Build-script smoke run:
+    - `python scripts/build_phase1a_dataset.py --symbols /ES,/CL,/PL --timeframe daily --version v1_task8_trial --json`
+    - Output: 24 rows, health all-passed, immutable artifact + manifest written.
+- **Decision:**
+  - Approve this as strict-path completion of Task 7 schema alignment and Task 8 build tooling foundation.
+  - Keep legacy COT aliases during transition to avoid regression in existing analyses.
+- **Gate impact:**
+  - No acceptance-threshold changes.
+  - No strategy-entry logic changes.
+  - Portfolio recommendation remains `CONDITIONAL GO`.
+- **Next actions (strict path):**
+  1. Wire real COT/VIX source files into scheduled dataset build (full symbol universe).
+  2. Run full-universe immutable dataset build and snapshot hash in governance closeout artifact.
+
 ## Future Entry Template
 ### Decision Entry — YYYY-MM-DD
 - Scope:
